@@ -5,11 +5,23 @@ create table if not exists public.user_app_state (
   exercise_completion jsonb default '{}'::jsonb,
   exercise_selection jsonb default '{}'::jsonb,
   check_in jsonb default '{}'::jsonb,
+  nutrition_plan jsonb,
+  weight_log jsonb default '[]'::jsonb,
+  workout_logs jsonb default '{}'::jsonb,
   adapted_plan text default '',
   plan_profile_signature text default '',
   current_week integer default 1,
   updated_at timestamptz default now()
 );
+
+alter table public.user_app_state
+add column if not exists nutrition_plan jsonb;
+
+alter table public.user_app_state
+add column if not exists weight_log jsonb default '[]'::jsonb;
+
+alter table public.user_app_state
+add column if not exists workout_logs jsonb default '{}'::jsonb;
 
 alter table public.user_app_state enable row level security;
 

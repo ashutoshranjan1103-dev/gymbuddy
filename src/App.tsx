@@ -1,8 +1,36 @@
-import { Apple, ArrowLeft, BarChart3, CalendarDays, CheckCircle2, ChevronRight, Cloud, Dumbbell, HeartPulse, LogOut, Mail, Sparkles, Timer, User, Wand2 } from "lucide-react";
+import {
+  Apple,
+  ArrowLeft,
+  BarChart3,
+  Bell,
+  CalendarDays,
+  Check,
+  CheckCheck,
+  CheckCircle2,
+  ChevronRight,
+  Cloud,
+  Droplet,
+  Dumbbell,
+  Flame,
+  HeartPulse,
+  House,
+  LogOut,
+  Mail,
+  Pause,
+  Play,
+  Plus,
+  Sparkles,
+  Timer,
+  User,
+  Utensils,
+  Wand2,
+  X,
+} from "lucide-react";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isSupabaseConfigured, supabase, type Session } from "./lib/supabase";
 
-type Screen = "welcome" | "onboarding" | "loading" | "save-plan" | "weekly-plan" | "today-workout" | "check-in" | "adaptation" | "nutrition" | "progress" | "profile";
+type Screen = "welcome" | "onboarding" | "loading" | "save-plan" | "home" | "weekly-plan" | "today-workout" | "check-in" | "adaptation" | "nutrition" | "progress" | "profile";
+type MainTab = "home" | "exercise" | "nutrition" | "progress";
 
 type BodyGoal = "Lose weight slowly" | "Maintain weight" | "Gain muscle slowly";
 
@@ -76,6 +104,18 @@ type NutritionMeal = {
   value: string;
 };
 
+type MealStyle = "North Indian" | "South Indian" | "Quick Budget";
+
+type MealSpotlight = {
+  title: string;
+  style: MealStyle;
+  image: string;
+  tag: string;
+  subtitle: string;
+  prepTime: string;
+  videoId: string;
+};
+
 type MacroTargets = {
   protein: number;
   carbs: number;
@@ -127,6 +167,45 @@ type ReminderSettings = {
   lastSentKey: string;
 };
 
+type WorkoutSectionKey = "warmUp" | "workout" | "coolDown";
+
+type WorkoutSectionLog = {
+  startedAt: string;
+  stoppedAt: string;
+  elapsedSeconds: number;
+  runningSince: string;
+};
+
+type DailyWorkoutLog = {
+  day: string;
+  beforeWeight: string;
+  afterWeight: string;
+  sections: Record<WorkoutSectionKey, WorkoutSectionLog>;
+  itemTimers: Record<string, WorkoutSectionLog>;
+  setLogs: Record<string, SetPerformanceLog[]>;
+};
+
+type WorkoutLogs = Record<string, DailyWorkoutLog>;
+
+type AuthMode = "sign-up" | "sign-in";
+
+type SetPerformanceLog = {
+  weight: string;
+  reps: string;
+  duration: string;
+};
+
+type ExercisePerformanceRow = {
+  exerciseId: string;
+  exerciseName: string;
+  muscleGroup: string;
+  day: string;
+  sets: SetPerformanceLog[];
+  totalReps: number;
+  bestWeight: number;
+  volume: number;
+};
+
 type CalendarDayProgress = {
   dayNumber: number;
   title: string;
@@ -168,6 +247,9 @@ type RemoteAppState = {
   exercise_completion: ExerciseCompletion | null;
   exercise_selection: ExerciseSelection | null;
   check_in: WorkoutCheckIn | null;
+  nutrition_plan: NutritionPlan | null;
+  weight_log: WeightLogEntry[] | null;
+  workout_logs: WorkoutLogs | null;
   adapted_plan: string | null;
   plan_profile_signature: string | null;
   current_week: number | null;
@@ -190,11 +272,14 @@ const STORAGE_KEYS = {
   lastActiveDate: "gymbuddy:last-active-date",
   monthlyProgress: "gymbuddy:monthly-progress",
   reminderSettings: "gymbuddy:reminder-settings",
+  smartNotifications: "gymbuddy:smart-notifications",
   nutritionPlan: "gymbuddy:nutrition-plan",
   nutritionSignature: "gymbuddy:nutrition-signature",
   nutritionSource: "gymbuddy:nutrition-source",
   nutritionError: "gymbuddy:nutrition-error",
+  waterIntake: "gymbuddy:water-intake",
   weightLog: "gymbuddy:weekly-weight-log",
+  workoutLogs: "gymbuddy:workout-logs",
 };
 
 const NUTRITION_TARGET_VERSION = "drink-water-standard-v3";
@@ -341,7 +426,8 @@ function getNotificationPermission(): ReminderPermission {
 }
 
 function isWorkoutDayComplete(day: DayPlan, completion: ExerciseCompletion) {
-  return !day.isRestDay && day.exercises.length > 0 && day.exercises.every((exercise) => completion[exercise.id] === "Done");
+  const trackableItems = [...day.warmUp, ...day.exercises, ...day.coolDown];
+  return !day.isRestDay && trackableItems.length > 0 && trackableItems.every((item) => completion[item.id] === "Done");
 }
 
 function getNextWorkoutDayIndex(plan: WeeklyPlan | null, completion: ExerciseCompletion) {
@@ -364,14 +450,14 @@ function getInitialScreen(): Screen {
   if (!plan) return "welcome";
 
   const lastActiveDate = readStorage(STORAGE_KEYS.lastActiveDate, "");
-  const lastScreen = readStorage<Screen>(STORAGE_KEYS.lastActiveScreen, "weekly-plan");
-  const sameDayResumeScreens: Screen[] = ["weekly-plan", "today-workout", "check-in", "adaptation", "nutrition", "progress", "profile", "save-plan"];
+  const lastScreen = readStorage<Screen>(STORAGE_KEYS.lastActiveScreen, "home");
+  const sameDayResumeScreens: Screen[] = ["home", "weekly-plan", "today-workout", "check-in", "adaptation", "nutrition", "progress", "profile", "save-plan"];
 
   if (lastActiveDate === getTodayKey() && sameDayResumeScreens.includes(lastScreen)) {
     return lastScreen;
   }
 
-  return "weekly-plan";
+  return "home";
 }
 
 function normalizeProfile(savedProfile: Partial<UserProfile>): UserProfile {
@@ -454,10 +540,47 @@ function getNutritionSignature(profile: UserProfile) {
   });
 }
 
+const VALUE_RULES = {
+  age: { min: 16, max: 60 },
+  height: { min: 135, max: 215 },
+  weight: { min: 30, max: 150 },
+};
+
+function cleanAlphabetName(value: string) {
+  return value.replace(/[^A-Za-z\s]/g, "").replace(/\s{2,}/g, " ");
+}
+
+function isAlphabetName(value: string) {
+  return /^[A-Za-z]+(?:\s+[A-Za-z]+)*$/.test(value.trim());
+}
+
+function isNumberInRange(value: string, min: number, max: number) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= min && number <= max;
+}
+
+function getOnboardingFieldErrors(profile: UserProfile) {
+  return {
+    name: isAlphabetName(profile.name) ? "" : "Enter your name using alphabet letters only.",
+    age: isNumberInRange(profile.age, VALUE_RULES.age.min, VALUE_RULES.age.max) ? "" : "Enter age from 16 to 60.",
+    height: isNumberInRange(profile.height, VALUE_RULES.height.min, VALUE_RULES.height.max) ? "" : "Enter height from 135 to 215 cm.",
+    weight: isNumberInRange(profile.weight, VALUE_RULES.weight.min, VALUE_RULES.weight.max) ? "" : "Enter weight from 30 to 150 kg.",
+  };
+}
+
+function isValidOnboardingProfile(profile: UserProfile) {
+  return Object.values(getOnboardingFieldErrors(profile)).every((error) => !error);
+}
+
 function calculateBmi(heightCm: string, weightKg: string) {
   const height = Number(heightCm);
   const weight = Number(weightKg);
-  if (!height || !weight) return null;
+  if (
+    !isNumberInRange(heightCm, VALUE_RULES.height.min, VALUE_RULES.height.max) ||
+    !isNumberInRange(weightKg, VALUE_RULES.weight.min, VALUE_RULES.weight.max)
+  ) {
+    return null;
+  }
   const heightM = height / 100;
   return Number((weight / (heightM * heightM)).toFixed(1));
 }
@@ -478,6 +601,27 @@ function getActivityFactor(daysPerWeek: UserProfile["daysPerWeek"]) {
   if (daysPerWeek === "3 days") return 1.375;
   if (daysPerWeek === "5 days") return 1.55;
   return 1.45;
+}
+
+function getLatestLoggedWeight(weightLog: WeightLogEntry[]) {
+  const latestEntry = [...weightLog]
+    .filter((entry) => Number.isFinite(entry.weight))
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
+  return latestEntry?.weight ?? null;
+}
+
+function getProfileWithLoggedWeight(profile: UserProfile, weightLog: WeightLogEntry[]) {
+  const latestWeight = getLatestLoggedWeight(weightLog);
+  if (!latestWeight) return profile;
+
+  const weight = String(latestWeight);
+  const bmi = calculateBmi(profile.height, weight);
+  return {
+    ...profile,
+    weight,
+    bmi,
+    bmiCategory: getBmiCategory(bmi),
+  };
 }
 
 function calculateMaintenanceCalories(profile: UserProfile) {
@@ -579,6 +723,29 @@ function getNutritionMeals(preference: UserProfile["dietPreference"]) {
   return meals[preference];
 }
 
+function getPostWorkoutFood(profile: UserProfile) {
+  if (profile.dietPreference === "Vegan") {
+    return "Soy chunks, tofu, dal, chana, or plant protein with rice/roti after training.";
+  }
+  if (profile.dietPreference === "Non-vegetarian") {
+    return "Eggs, whey, chicken, fish, paneer, curd, or dal with rice/roti after training.";
+  }
+  if (profile.dietPreference === "Eggetarian") {
+    return "Eggs, whey, paneer, curd, dal, or tofu with rice/roti after training.";
+  }
+  return "Paneer, whey, curd, dal, tofu, or soy chunks with rice/roti after training.";
+}
+
+function applyProteinWorkoutFood(plan: NutritionPlan, profile: UserProfile): NutritionPlan {
+  return {
+    ...plan,
+    workoutFood: {
+      ...plan.workoutFood,
+      after: getPostWorkoutFood(profile),
+    },
+  };
+}
+
 function createFallbackNutritionPlan(profile: UserProfile): NutritionPlan {
   return {
     dietPreference: profile.dietPreference,
@@ -589,14 +756,7 @@ function createFallbackNutritionPlan(profile: UserProfile): NutritionPlan {
     meals: getNutritionMeals(profile.dietPreference),
     workoutFood: {
       before: "Banana, black coffee, or light poha 45-60 minutes before training.",
-      after:
-        profile.dietPreference === "Vegan"
-          ? "Soy chunks, tofu, dal, or chana with rice/roti after training."
-          : profile.dietPreference === "Non-vegetarian"
-            ? "Eggs, chicken, fish, dal, or curd with rice/roti after training."
-            : profile.dietPreference === "Eggetarian"
-              ? "Eggs, dal, paneer, curd, or rice/roti after training."
-              : "Paneer, dal, curd, tofu, rice, or roti after training.",
+      after: getPostWorkoutFood(profile),
       hydration: `Drink about ${getDailyWaterToDrinkLiters(profile)} L water across the day. Sip during workouts instead of drinking all at once.`,
     },
     note: `${profile.bodyGoal} is applied gently for this week. Food choices are simple Indian options for beginners; adjust portions based on hunger, digestion, and progress.`,
@@ -1245,24 +1405,184 @@ function wait(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
+function createEmptySectionLog(): WorkoutSectionLog {
+  return { startedAt: "", stoppedAt: "", elapsedSeconds: 0, runningSince: "" };
+}
+
+function normalizeSectionLog(section?: Partial<WorkoutSectionLog>): WorkoutSectionLog {
+  return {
+    startedAt: section?.startedAt ?? "",
+    stoppedAt: section?.stoppedAt ?? "",
+    elapsedSeconds: Number(section?.elapsedSeconds ?? 0),
+    runningSince: section?.runningSince ?? "",
+  };
+}
+
+function createDefaultWorkoutLog(day: DayPlan | null, fallbackWeight = ""): DailyWorkoutLog {
+  return {
+    day: day?.day ?? "",
+    beforeWeight: fallbackWeight,
+    afterWeight: "",
+    sections: {
+      warmUp: createEmptySectionLog(),
+      workout: createEmptySectionLog(),
+      coolDown: createEmptySectionLog(),
+    },
+    itemTimers: {},
+    setLogs: {},
+  };
+}
+
+function getWorkoutLog(logs: WorkoutLogs, day: DayPlan | null, fallbackWeight = "") {
+  const fallbackLog = createDefaultWorkoutLog(day, fallbackWeight);
+  if (!day) return fallbackLog;
+  const savedLog = logs[day.day];
+  if (!savedLog) return fallbackLog;
+
+  const savedSections = savedLog.sections ?? fallbackLog.sections;
+  const savedTimers = savedLog.itemTimers ?? {};
+
+  return {
+    ...fallbackLog,
+    ...savedLog,
+    sections: {
+      warmUp: normalizeSectionLog(savedSections.warmUp),
+      workout: normalizeSectionLog(savedSections.workout),
+      coolDown: normalizeSectionLog(savedSections.coolDown),
+    },
+    itemTimers: Object.fromEntries(Object.entries(savedTimers).map(([id, timer]) => [id, normalizeSectionLog(timer)])),
+    setLogs: savedLog.setLogs ?? {},
+  };
+}
+
+function formatClockTime(value: string) {
+  if (!value) return "--";
+  return new Date(value).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function formatDuration(totalSeconds: number) {
+  const safeSeconds = Math.max(0, Math.round(totalSeconds));
+  const minutes = Math.floor(safeSeconds / 60);
+  const seconds = safeSeconds % 60;
+  if (minutes <= 0) return `${seconds}s`;
+  return `${minutes}m ${String(seconds).padStart(2, "0")}s`;
+}
+
+function getSectionElapsedSeconds(section: WorkoutSectionLog, now = Date.now()) {
+  const runningSeconds = section.runningSince ? Math.max(0, Math.round((now - new Date(section.runningSince).getTime()) / 1000)) : 0;
+  return section.elapsedSeconds + runningSeconds;
+}
+
+function getLoggedSecondsForItems(log: DailyWorkoutLog, itemIds: string[], now = Date.now()) {
+  return itemIds.reduce((sum, itemId) => sum + getSectionElapsedSeconds(getItemTimer(log, itemId), now), 0);
+}
+
+function getWorkoutActivitySummary(day: DayPlan | null, log: DailyWorkoutLog, completion: ExerciseCompletion) {
+  const warmUpSeconds = day ? getLoggedSecondsForItems(log, day.warmUp.map((activity) => activity.id)) : 0;
+  const workoutSeconds = day ? getLoggedSecondsForItems(log, day.exercises.map((exercise) => exercise.id)) : 0;
+  const coolDownSeconds = day ? getLoggedSecondsForItems(log, day.coolDown.map((activity) => activity.id)) : 0;
+  const activeSeconds = warmUpSeconds + workoutSeconds + coolDownSeconds;
+  const completedRestSeconds =
+    day?.exercises.reduce((sum, exercise) => {
+      const status = completion[exercise.id];
+      if (status !== "Done" && status !== "Partially done") return sum;
+      return sum + exercise.main.restSeconds;
+    }, 0) ?? 0;
+
+  return {
+    activeSeconds,
+    coolDownSeconds,
+    restSeconds: completedRestSeconds,
+    warmUpSeconds,
+    workoutSeconds,
+  };
+}
+
+function getItemTimer(log: DailyWorkoutLog, itemId: string) {
+  return log.itemTimers[itemId] ?? createEmptySectionLog();
+}
+
+function parseSetCount(sets: string) {
+  const match = sets.match(/\d+/);
+  return match ? Math.min(6, Math.max(1, Number(match[0]))) : 3;
+}
+
+function parseSuggestedReps(reps: string) {
+  const match = reps.match(/\d+/);
+  return match ? String(match[0]) : "";
+}
+
+function normalizeSetLogs(logs: SetPerformanceLog[] | undefined, option: ExerciseOption, includeWeight: boolean) {
+  const targetCount = parseSetCount(option.sets);
+  const baseReps = parseSuggestedReps(option.repsPerSet);
+  const rows = [...(logs ?? [])];
+  while (rows.length < targetCount) rows.push({ weight: includeWeight ? "" : "Bodyweight", reps: baseReps, duration: "" });
+  return rows.slice(0, Math.max(targetCount, rows.length));
+}
+
+function getLoggedSetSummary(logs: SetPerformanceLog[] | undefined, isTimeBased: boolean, includeWeight: boolean) {
+  const validRows = (logs ?? []).filter((set) => set.reps || set.weight || set.duration);
+  if (!validRows.length) return "No sets logged yet";
+  const totalReps = validRows.reduce((sum, set) => sum + (Number(set.reps) || 0), 0);
+  const bestWeight = includeWeight ? Math.max(...validRows.map((set) => Number(set.weight) || 0)) : 0;
+  if (isTimeBased) return `${validRows.length} sets logged`;
+  if (includeWeight && bestWeight > 0) return `${validRows.length} sets | best ${bestWeight} kg | ${totalReps} reps`;
+  return `${validRows.length} sets | ${totalReps} reps`;
+}
+
+function getExercisePerformanceRows(plan: WeeklyPlan | null, workoutLogs: WorkoutLogs, exerciseSelection: ExerciseSelection = {}): ExercisePerformanceRow[] {
+  if (!plan) return [];
+
+  return plan.days.flatMap((day) => getDayExercisePerformanceRows(day, workoutLogs[day.day], exerciseSelection));
+}
+
+function getDayExercisePerformanceRows(day: DayPlan, log: DailyWorkoutLog | undefined, exerciseSelection: ExerciseSelection = {}): ExercisePerformanceRow[] {
+  if (!log?.setLogs) return [];
+
+  return day.exercises.flatMap((exercise) => {
+    const setLogs = (log.setLogs[exercise.id] ?? []).filter((set) => set.weight || set.reps || set.duration);
+    if (!setLogs.length) return [];
+
+    const selectedOption = exercise[exerciseSelection[exercise.id] ?? "main"];
+    const totalReps = setLogs.reduce((sum, set) => sum + (Number(set.reps) || 0), 0);
+    const bestWeight = Math.max(0, ...setLogs.map((set) => Number(set.weight) || 0));
+    const volume = setLogs.reduce((sum, set) => sum + (Number(set.weight) || 0) * (Number(set.reps) || 0), 0);
+
+    return [
+      {
+        exerciseId: exercise.id,
+        exerciseName: selectedOption.name,
+        muscleGroup: exercise.muscleGroup,
+        day: day.day,
+        sets: setLogs,
+        totalReps,
+        bestWeight,
+        volume,
+      },
+    ];
+  });
+}
+
 function getDayProgress(day: DayPlan, completion: ExerciseCompletion) {
-  if (day.isRestDay || day.exercises.length === 0) {
+  const trackableItems = [...day.warmUp, ...day.exercises, ...day.coolDown];
+
+  if (day.isRestDay || trackableItems.length === 0) {
     return { total: 0, done: 0, partial: 0, skipped: 0, percent: 0, isComplete: false };
   }
 
-  const done = day.exercises.filter((exercise) => completion[exercise.id] === "Done").length;
-  const partial = day.exercises.filter((exercise) => completion[exercise.id] === "Partially done").length;
-  const skipped = day.exercises.filter((exercise) => completion[exercise.id] === "Not done").length;
+  const done = trackableItems.filter((item) => completion[item.id] === "Done").length;
+  const partial = trackableItems.filter((item) => completion[item.id] === "Partially done").length;
+  const skipped = trackableItems.filter((item) => completion[item.id] === "Not done").length;
   const progressUnits = done + partial * 0.5;
-  const percent = Math.round((progressUnits / day.exercises.length) * 100);
+  const percent = Math.round((progressUnits / trackableItems.length) * 100);
 
   return {
-    total: day.exercises.length,
+    total: trackableItems.length,
     done,
     partial,
     skipped,
     percent,
-    isComplete: done === day.exercises.length,
+    isComplete: done === trackableItems.length,
   };
 }
 
@@ -1302,19 +1622,19 @@ function getPartiallyStartedDay(plan: WeeklyPlan | null, completion: ExerciseCom
 }
 
 function getProgressNudge(plan: WeeklyPlan | null, completion: ExerciseCompletion) {
-  if (!plan) return "Create your weekly plan first, then GymBuddy can remind you.";
+  if (!plan) return "Create your plan";
 
   const weekly = getWeeklyProgress(plan, completion);
   const remainingDays = getRemainingWorkoutDays(plan, completion);
   const nextDay = getReminderTargetDay(plan, completion);
   const partialDay = getPartiallyStartedDay(plan, completion);
 
-  if (remainingDays === 0) return "Week complete. Keep the momentum going into the next plan.";
-  if (weekly.percent === 0 && nextDay) return `${nextDay.day} is waiting. Start small and just complete the warm-up first.`;
-  if (partialDay) return `Continue ${partialDay.day} or move to your next planned workout. Keep the week moving without rushing.`;
-  if (weekly.percent < 50 && nextDay) return `${remainingDays} workout days left. Next up: ${nextDay.day} - ${nextDay.title}.`;
-  if (weekly.percent < 80) return `You are at ${weekly.percent}%. One steady session can push the week forward.`;
-  return `Strong week: ${weekly.percent}% done. Finish the last pieces without rushing.`;
+  if (remainingDays === 0) return "Week complete";
+  if (weekly.percent === 0 && nextDay) return `Start ${nextDay.day}`;
+  if (partialDay) return `Finish ${partialDay.day}.`;
+  if (weekly.percent < 50 && nextDay) return `${remainingDays} workouts left. Next: ${nextDay.day}.`;
+  if (weekly.percent < 80) return `${weekly.percent}% done`;
+  return `${weekly.percent}% done`;
 }
 
 function normalizeReminderSettings(settings: Partial<ReminderSettings>): ReminderSettings {
@@ -1436,7 +1756,10 @@ function App() {
   const [nutritionError, setNutritionError] = useState(() => readStorage(STORAGE_KEYS.nutritionError, ""));
   const [isNutritionLoading, setIsNutritionLoading] = useState(false);
   const [weightLog, setWeightLog] = useState<WeightLogEntry[]>(() => readStorage<WeightLogEntry[]>(STORAGE_KEYS.weightLog, []));
+  const [workoutLogs, setWorkoutLogs] = useState<WorkoutLogs>(() => readStorage<WorkoutLogs>(STORAGE_KEYS.workoutLogs, {}));
   const [notificationPermission, setNotificationPermission] = useState<ReminderPermission>(() => getNotificationPermission());
+  const [smartNotificationsEnabled, setSmartNotificationsEnabled] = useState(() => readStorage(STORAGE_KEYS.smartNotifications, false));
+  const [headerToast, setHeaderToast] = useState("");
   const [activeVideo, setActiveVideo] = useState<VideoTarget | null>(null);
   const [selectedDayIndex, setSelectedDayIndex] = useState(() => {
     const localPlan = readStorage<WeeklyPlan | null>(STORAGE_KEYS.plan, null);
@@ -1451,11 +1774,15 @@ function App() {
   const [cloudLoadedFor, setCloudLoadedFor] = useState("");
 
   const todaysPlan = weeklyPlan?.days[selectedDayIndex] ?? weeklyPlan?.days[0] ?? null;
+  const todaysWorkoutLog = getWorkoutLog(workoutLogs, todaysPlan, profile.weight);
+  const todaysActivitySummary = getWorkoutActivitySummary(todaysPlan, todaysWorkoutLog, completion);
   const resumeDayIndex = useMemo(() => getResumeDayIndex(weeklyPlan, completion, selectedDayIndex), [completion, selectedDayIndex, weeklyPlan]);
   const resumeDay = weeklyPlan?.days[resumeDayIndex] ?? weeklyPlan?.days[0] ?? null;
   const completedCount = Object.values(completion).filter((status) => status === "Done").length;
   const showBottomNav = Boolean(weeklyPlan) && !["welcome", "onboarding", "loading", "save-plan"].includes(screen);
-  const activeMainTab = screen === "nutrition" ? "nutrition" : screen === "progress" ? "progress" : screen === "profile" ? "profile" : "exercise";
+  const showAppHeader = Boolean(weeklyPlan) && !["welcome", "onboarding", "loading", "save-plan"].includes(screen);
+  const activeMainTab: MainTab = screen === "nutrition" ? "nutrition" : screen === "progress" ? "progress" : screen === "weekly-plan" || screen === "today-workout" || screen === "check-in" || screen === "adaptation" ? "exercise" : "home";
+  const headerSubtitle = getHeaderSubtitle(screen);
 
   useEffect(() => {
     const bmi = calculateBmi(profile.height, profile.weight);
@@ -1477,11 +1804,17 @@ function App() {
     writeStorage(STORAGE_KEYS.lastActiveDate, getTodayKey());
   }, [screen]);
 
+  useEffect(() => {
+    if (!headerToast) return;
+    const timer = window.setTimeout(() => setHeaderToast(""), 2200);
+    return () => window.clearTimeout(timer);
+  }, [headerToast]);
+
   const saveCloudState = useCallback(
-    async (successMessage = "Saved to Supabase.") => {
+    async (successMessage = "Saved online.") => {
       if (!supabase || !session?.user.id) {
         setSyncStatus(isSupabaseConfigured ? "idle" : "error");
-        setSyncMessage(isSupabaseConfigured ? "Sign in to save this plan online." : "Add Supabase URL and publishable key to enable cloud save.");
+        setSyncMessage(isSupabaseConfigured ? "Sign in to save this plan online." : "Online save is not available right now.");
         return false;
       }
 
@@ -1495,6 +1828,9 @@ function App() {
           exercise_completion: completion,
           exercise_selection: exerciseSelection,
           check_in: checkIn,
+          nutrition_plan: nutritionPlan,
+          weight_log: weightLog,
+          workout_logs: workoutLogs,
           adapted_plan: adaptedPlan,
           plan_profile_signature: readStorage(STORAGE_KEYS.planProfileSignature, ""),
           current_week: weeklyPlan?.week ?? 1,
@@ -1510,11 +1846,11 @@ function App() {
         return true;
       } catch {
         setSyncStatus("error");
-        setSyncMessage("Could not save to Supabase. Local save is still active.");
+        setSyncMessage("Could not save online. Device save is still active.");
         return false;
       }
     },
-    [adaptedPlan, checkIn, completion, exerciseSelection, profile, session?.user.id, weeklyPlan],
+    [adaptedPlan, checkIn, completion, exerciseSelection, nutritionPlan, profile, session?.user.id, weeklyPlan, weightLog, workoutLogs],
   );
 
   const loadCloudState = useCallback(
@@ -1522,7 +1858,7 @@ function App() {
       if (!supabase) return;
 
       setSyncStatus("loading");
-      setSyncMessage("Loading your saved GymBuddy plan...");
+    setSyncMessage("Loading your saved GymBuddy plan...");
 
       try {
         const { data, error } = await supabase.from("user_app_state").select("*").eq("user_id", userId).maybeSingle();
@@ -1540,7 +1876,7 @@ function App() {
           setWeeklyPlan(remote.weekly_plan);
           writeStorage(STORAGE_KEYS.plan, remote.weekly_plan);
           setSelectedDayIndex(0);
-          setScreen("weekly-plan");
+          setScreen("home");
           setScreenHistory([]);
         }
 
@@ -1558,6 +1894,21 @@ function App() {
           const nextCheckIn = normalizeCheckIn(remote.check_in);
           setCheckIn(nextCheckIn);
           writeStorage(STORAGE_KEYS.checkIn, nextCheckIn);
+        }
+
+        if (remote?.nutrition_plan) {
+          setNutritionPlan(remote.nutrition_plan);
+          writeStorage(STORAGE_KEYS.nutritionPlan, remote.nutrition_plan);
+        }
+
+        if (remote?.weight_log) {
+          setWeightLog(remote.weight_log);
+          writeStorage(STORAGE_KEYS.weightLog, remote.weight_log);
+        }
+
+        if (remote?.workout_logs) {
+          setWorkoutLogs(remote.workout_logs);
+          writeStorage(STORAGE_KEYS.workoutLogs, remote.workout_logs);
         }
 
         if (remote?.adapted_plan) {
@@ -1593,12 +1944,12 @@ function App() {
 
         setCloudLoadedFor(userId);
         setSyncStatus("saved");
-        setSyncMessage(remote ? "Loaded your saved GymBuddy data." : "Email confirmed. Your local plan is ready to sync.");
+        setSyncMessage(remote ? "Loaded your saved GymBuddy data." : "Signed in. Your device-saved plan is ready.");
         setLastSyncedAt(remote?.updated_at ? new Date(remote.updated_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "");
       } catch {
         setCloudLoadedFor(userId);
         setSyncStatus("error");
-        setSyncMessage("Could not load Supabase data. Local save is still active.");
+        setSyncMessage("Could not load online data. Device save is still active.");
       }
     },
     [],
@@ -1626,7 +1977,7 @@ function App() {
       if (!nextSession) {
         setCloudLoadedFor("");
         setSyncStatus("idle");
-        setSyncMessage("Signed out. Local save is still active on this device.");
+        setSyncMessage("");
       }
     });
 
@@ -1644,63 +1995,27 @@ function App() {
   useEffect(() => {
     if (!supabase || !session?.user.id || cloudLoadedFor !== session.user.id) return;
     const syncTimer = window.setTimeout(() => {
-      void saveCloudState("Saved to Supabase.");
+      void saveCloudState("Saved online.");
     }, 1000);
 
     return () => window.clearTimeout(syncTimer);
   }, [cloudLoadedFor, saveCloudState, session?.user.id]);
 
   useEffect(() => {
-    writeStorage(STORAGE_KEYS.reminderSettings, reminderSettings);
-  }, [reminderSettings]);
-
-  useEffect(() => {
     if (screen !== "nutrition") return;
     void refreshNutritionPlan(profile);
-  }, [profile.age, profile.bmi, profile.bmiCategory, profile.bodyGoal, profile.daysPerWeek, profile.dietPreference, profile.gender, profile.goal, profile.height, profile.weight, screen]);
-
-  useEffect(() => {
-    if (!weeklyPlan || !reminderSettings.enabled || notificationPermission !== "granted") return;
-    if (!getReminderTargetDay(weeklyPlan, completion)) return;
-    const timeParts = getReminderTimeParts(reminderSettings);
-    if (!timeParts) return;
-
-    const now = new Date();
-    const reminderAt = new Date();
-    reminderAt.setHours(timeParts.hours, timeParts.minutes, 0, 0);
-
-    const reminderTimeKey = `${timeParts.hours}:${String(timeParts.minutes).padStart(2, "0")}`;
-    const todayReminderKey = `${getLocalDateKey(reminderAt)}-${reminderTimeKey}`;
-    if (reminderAt.getTime() <= now.getTime() || reminderSettings.lastSentKey === todayReminderKey) {
-      reminderAt.setDate(reminderAt.getDate() + 1);
-    }
-
-    const timer = window.setTimeout(() => {
-      if (!getReminderTargetDay(weeklyPlan, completion)) return;
-
-      new Notification("GymBuddy workout reminder", {
-        body: buildReminderBody(weeklyPlan, completion),
-        tag: "gymbuddy-workout-reminder",
-      });
-
-      setReminderSettings((current) => ({
-        ...current,
-        lastSentKey: `${getLocalDateKey(new Date())}-${reminderTimeKey}`,
-      }));
-    }, reminderAt.getTime() - now.getTime());
-
-    return () => window.clearTimeout(timer);
-  }, [completion, notificationPermission, reminderSettings, weeklyPlan]);
+  }, [profile.age, profile.bmi, profile.bmiCategory, profile.bodyGoal, profile.daysPerWeek, profile.dietPreference, profile.gender, profile.goal, profile.height, profile.weight, screen, weightLog]);
 
   function updateProfile<K extends keyof UserProfile>(key: K, value: UserProfile[K]) {
     setProfile((current) => ({ ...current, [key]: value }));
   }
 
-  async function refreshNutritionPlan(nextProfile = profile, forceRefresh = false) {
+  async function refreshNutritionPlan(nextProfile = profile, forceRefresh = false, nutritionWeightLog = weightLog) {
+    const nutritionProfile = getProfileWithLoggedWeight(nextProfile, nutritionWeightLog);
     const finalProfile = {
-      ...nextProfile,
-      bmi: calculateBmi(nextProfile.height, nextProfile.weight),
-      bmiCategory: getBmiCategory(calculateBmi(nextProfile.height, nextProfile.weight)),
+      ...nutritionProfile,
+      bmi: calculateBmi(nutritionProfile.height, nutritionProfile.weight),
+      bmiCategory: getBmiCategory(calculateBmi(nutritionProfile.height, nutritionProfile.weight)),
     };
     const signature = getNutritionSignature(finalProfile);
     const cachedSignature = readStorage(STORAGE_KEYS.nutritionSignature, "");
@@ -1723,9 +2038,10 @@ function App() {
 
     try {
       const aiNutritionPlan = await requestAiNutritionPlan(finalProfile, fallbackPlan);
-      setNutritionPlan(aiNutritionPlan);
+      const proteinFocusedPlan = applyProteinWorkoutFood(aiNutritionPlan, finalProfile);
+      setNutritionPlan(proteinFocusedPlan);
       setNutritionSource("ai");
-      writeStorage(STORAGE_KEYS.nutritionPlan, aiNutritionPlan);
+      writeStorage(STORAGE_KEYS.nutritionPlan, proteinFocusedPlan);
       writeStorage(STORAGE_KEYS.nutritionSource, "ai");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Nutrition generation failed";
@@ -1743,16 +2059,28 @@ function App() {
     void refreshNutritionPlan(nextProfile, true);
   }
 
-  function handleBodyGoalChange(bodyGoal: BodyGoal) {
-    const nextProfile = { ...profile, bodyGoal };
-    setProfile(nextProfile);
-    writeStorage(STORAGE_KEYS.profile, nextProfile);
-    void refreshNutritionPlan(nextProfile, true);
+  function handleProfileUpdate(nextProfile: UserProfile) {
+    const cleanProfile = {
+      ...nextProfile,
+      name: cleanAlphabetName(nextProfile.name).trim(),
+    };
+    const nextBmi = calculateBmi(cleanProfile.height, cleanProfile.weight);
+    const updatedProfile = {
+      ...cleanProfile,
+      bmi: nextBmi,
+      bmiCategory: getBmiCategory(nextBmi),
+    };
+
+    setProfile(updatedProfile);
+    writeStorage(STORAGE_KEYS.profile, updatedProfile);
+    setSyncStatus("saved");
+    setSyncMessage("Profile updated");
+    void refreshNutritionPlan(updatedProfile, true);
   }
 
   function handleWeeklyWeightLog(weightKg: string) {
     const numericWeight = Number(weightKg);
-    if (!Number.isFinite(numericWeight) || numericWeight < 20 || numericWeight > 250) return false;
+    if (!isNumberInRange(weightKg, VALUE_RULES.weight.min, VALUE_RULES.weight.max)) return false;
 
     const cleanWeight = Number(numericWeight.toFixed(1));
     const nextBmi = calculateBmi(profile.height, String(cleanWeight));
@@ -1776,64 +2104,228 @@ function App() {
     setWeightLog(nextWeightLog);
     writeStorage(STORAGE_KEYS.profile, nextProfile);
     writeStorage(STORAGE_KEYS.weightLog, nextWeightLog);
-    void refreshNutritionPlan(nextProfile, true);
+    void refreshNutritionPlan(nextProfile, true, nextWeightLog);
     return true;
   }
 
-  async function handleEnableReminders() {
+  function updateWorkoutLog(day: DayPlan, updater: (current: DailyWorkoutLog) => DailyWorkoutLog) {
+    setWorkoutLogs((current) => {
+      const nextLog = updater(getWorkoutLog(current, day, profile.weight));
+      const next = { ...current, [day.day]: nextLog };
+      writeStorage(STORAGE_KEYS.workoutLogs, next);
+      return next;
+    });
+  }
+
+  function applyLoggedBodyWeight(weightValue: string) {
+    if (!isNumberInRange(weightValue, VALUE_RULES.weight.min, VALUE_RULES.weight.max)) return;
+
+    const cleanWeight = Number(Number(weightValue).toFixed(1));
+    const nextBmi = calculateBmi(profile.height, String(cleanWeight));
+    const nextProfile = {
+      ...profile,
+      weight: String(cleanWeight),
+      bmi: nextBmi,
+      bmiCategory: getBmiCategory(nextBmi),
+    };
+    const entry: WeightLogEntry = {
+      id: getWeekStartKey(),
+      date: getLocalDateKey(),
+      weight: cleanWeight,
+      bmi: nextBmi,
+      maintenanceCalories: calculateMaintenanceCalories(nextProfile),
+      targetCalories: calculateTargetCalories(nextProfile),
+    };
+    const nextWeightLog = [entry, ...weightLog.filter((item) => item.id !== entry.id)].slice(0, 12);
+    setProfile(nextProfile);
+    setWeightLog(nextWeightLog);
+    writeStorage(STORAGE_KEYS.profile, nextProfile);
+    writeStorage(STORAGE_KEYS.weightLog, nextWeightLog);
+    void refreshNutritionPlan(nextProfile, true, nextWeightLog);
+  }
+
+  function updateWorkoutWeight(day: DayPlan, key: "beforeWeight" | "afterWeight", value: string) {
+    const currentLog = getWorkoutLog(workoutLogs, day, profile.weight);
+    updateWorkoutLog(day, (current) => ({ ...current, [key]: value }));
+
+    if (key === "afterWeight" || !currentLog.afterWeight) applyLoggedBodyWeight(value);
+  }
+
+  function toggleWorkoutItemTimer(day: DayPlan, itemId: string) {
+    updateWorkoutLog(day, (current) => {
+      const timer = getItemTimer(current, itemId);
+      const now = new Date().toISOString();
+
+      if (timer.runningSince) {
+        return {
+          ...current,
+          itemTimers: {
+            ...current.itemTimers,
+            [itemId]: {
+              ...timer,
+              stoppedAt: now,
+              elapsedSeconds: getSectionElapsedSeconds(timer, new Date(now).getTime()),
+              runningSince: "",
+            },
+          },
+        };
+      }
+
+      return {
+        ...current,
+        itemTimers: {
+          ...current.itemTimers,
+          [itemId]: {
+            ...timer,
+            startedAt: timer.startedAt || now,
+            stoppedAt: "",
+            runningSince: now,
+          },
+        },
+      };
+    });
+  }
+
+  function updateExerciseSetLog(day: DayPlan, exerciseId: string, setIndex: number, key: keyof SetPerformanceLog, value: string) {
+    updateWorkoutLog(day, (current) => {
+      const rows = [...(current.setLogs[exerciseId] ?? [])];
+      while (rows.length <= setIndex) rows.push({ weight: "", reps: "", duration: "" });
+      rows[setIndex] = { ...rows[setIndex], [key]: value };
+
+      return {
+        ...current,
+        setLogs: {
+          ...current.setLogs,
+          [exerciseId]: rows,
+        },
+      };
+    });
+  }
+
+  async function handleToggleSmartNotifications() {
+    if (smartNotificationsEnabled) {
+      setSmartNotificationsEnabled(false);
+      writeStorage(STORAGE_KEYS.smartNotifications, false);
+      setHeaderToast("Smart notification turned off");
+      return;
+    }
+
     const currentPermission = getNotificationPermission();
     setNotificationPermission(currentPermission);
 
-    if (currentPermission === "unsupported") return;
+    if (currentPermission === "unsupported") {
+      setSyncStatus("error");
+      setSyncMessage("Notifications are not available in this browser.");
+      setHeaderToast("Notifications are not available");
+      return;
+    }
 
     const nextPermission = currentPermission === "default" ? await Notification.requestPermission() : currentPermission;
     setNotificationPermission(nextPermission);
 
     if (nextPermission === "granted") {
-      setReminderSettings((current) => ({ ...current, enabled: true }));
+      setSmartNotificationsEnabled(true);
+      writeStorage(STORAGE_KEYS.smartNotifications, true);
+      setSyncStatus("saved");
+      setSyncMessage("Notifications are on. GymBuddy can remind you from this browser.");
+      setHeaderToast("Smart notification turned on");
+    } else {
+      setSmartNotificationsEnabled(false);
+      writeStorage(STORAGE_KEYS.smartNotifications, false);
+      setSyncStatus("idle");
+      setSyncMessage("You can turn notifications on later from your browser settings.");
+      setHeaderToast("Notifications blocked");
     }
   }
 
-  function handleDisableReminders() {
-    setReminderSettings((current) => ({ ...current, enabled: false }));
-  }
-
-  function handleReminderTimeChange(nextTime: Pick<ReminderSettings, "hour" | "minute" | "period">) {
-    setReminderSettings((current) => ({ ...current, ...nextTime, lastSentKey: "" }));
-  }
-
-  async function handleEmailSignIn(email: string) {
+  async function handlePasswordAuth(email: string, password: string, mode: AuthMode) {
     if (!supabase) {
       setSyncStatus("error");
-      setSyncMessage("Add Supabase URL and publishable key first.");
+      setSyncMessage("Online save is not available right now. Your plan is saved on this device.");
+      return false;
+    }
+
+    const cleanEmail = email.trim();
+    if (!cleanEmail || password.length < 6) {
+      setSyncStatus("error");
+      setSyncMessage("Enter an email and a password with at least 6 characters.");
+      return false;
+    }
+
+    setSyncStatus("loading");
+    setSyncMessage(mode === "sign-up" ? "Creating your account..." : "Signing you in...");
+    const { error } =
+      mode === "sign-up"
+        ? await supabase.auth.signUp({ email: cleanEmail, password })
+        : await supabase.auth.signInWithPassword({ email: cleanEmail, password });
+
+    if (error) {
+      setSyncStatus("error");
+      setSyncMessage(error.message);
+      return false;
+    }
+
+    setSyncStatus("saved");
+    setSyncMessage(mode === "sign-up" ? "Account created. Your plan can now sync online." : "Signed in. Your plan can now sync online.");
+    return true;
+  }
+
+  async function handlePasswordReset(email: string) {
+    if (!supabase) {
+      setSyncStatus("error");
+      setSyncMessage("Online save is not available right now.");
       return false;
     }
 
     const cleanEmail = email.trim();
     if (!cleanEmail) {
       setSyncStatus("error");
-      setSyncMessage("Enter an email address first.");
+      setSyncMessage("Enter your email first.");
       return false;
     }
 
     setSyncStatus("loading");
-    setSyncMessage("Sending secure email link...");
-    const { error } = await supabase.auth.signInWithOtp({
-      email: cleanEmail,
-      options: {
-        emailRedirectTo: window.location.origin,
-        shouldCreateUser: true,
-      },
+    setSyncMessage("Sending reset link...");
+    const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
+      redirectTo: window.location.origin,
     });
 
     if (error) {
       setSyncStatus("error");
-      setSyncMessage(`Email link could not be sent: ${error.message}`);
+      setSyncMessage(error.message);
       return false;
     }
 
     setSyncStatus("saved");
-    setSyncMessage("Email link sent. Open it on this same browser/device to back up your plan.");
+    setSyncMessage("Password reset link sent");
+    return true;
+  }
+
+  async function handlePasswordUpdate(password: string) {
+    if (!supabase) {
+      setSyncStatus("error");
+      setSyncMessage("Online save is not available right now.");
+      return false;
+    }
+
+    if (password.length < 6) {
+      setSyncStatus("error");
+      setSyncMessage("Use at least 6 characters.");
+      return false;
+    }
+
+    setSyncStatus("loading");
+    setSyncMessage("Updating password...");
+    const { error } = await supabase.auth.updateUser({ password });
+
+    if (error) {
+      setSyncStatus("error");
+      setSyncMessage(error.message);
+      return false;
+    }
+
+    setSyncStatus("saved");
+    setSyncMessage("Password updated");
     return true;
   }
 
@@ -1856,10 +2348,12 @@ function App() {
 
   async function handleGeneratePlan(event: FormEvent) {
     event.preventDefault();
-    if (!profile.height || !profile.weight) return;
+    if (!isValidOnboardingProfile(profile)) return;
 
     const finalProfile = {
       ...profile,
+      name: profile.name.trim(),
+      age: profile.age.trim(),
       bmi: calculateBmi(profile.height, profile.weight),
       bmiCategory: getBmiCategory(calculateBmi(profile.height, profile.weight)),
       injuryDetail: profile.injuryOrPain === "Other" ? profile.injuryDetail : "",
@@ -1877,7 +2371,7 @@ function App() {
       setSelectedDayIndex(nextDayIndex);
       writeStorage(STORAGE_KEYS.profile, finalProfile);
       writeStorage(STORAGE_KEYS.aiPrompt, prompt);
-      setScreen(session?.user.id ? "weekly-plan" : "save-plan");
+      setScreen(session?.user.id ? "home" : "save-plan");
       return;
     }
 
@@ -1916,7 +2410,7 @@ function App() {
     writeStorage(STORAGE_KEYS.aiError, nextAiError);
     writeStorage(STORAGE_KEYS.planProfileSignature, profileSignature);
     writeStorage(STORAGE_KEYS.monthlyProgress, nextMonthlyProgress);
-    setScreen(session?.user.id ? "weekly-plan" : "save-plan");
+    setScreen(session?.user.id ? "home" : "save-plan");
   }
 
   function updateExerciseStatus(id: string, status: ExerciseStatus) {
@@ -1973,16 +2467,28 @@ function App() {
     goToScreen("today-workout");
   }
 
-  function navigateMainTab(tab: "exercise" | "nutrition" | "progress" | "profile") {
+  function navigateMainTab(tab: MainTab) {
+    if (tab === "home") setScreen("home");
     if (tab === "exercise") setScreen("weekly-plan");
     if (tab === "nutrition") setScreen("nutrition");
     if (tab === "progress") setScreen("progress");
-    if (tab === "profile") setScreen("profile");
   }
 
   return (
     <main className="gb-theme min-h-[100dvh] bg-[#0F172A] p-0 text-[#FFFFFF] sm:px-4 sm:py-5">
       <div className="mx-auto flex min-h-[100dvh] w-full max-w-md flex-col overflow-hidden border-0 bg-[#1E293B] shadow-none sm:min-h-[calc(100vh-2.5rem)] sm:rounded-[2rem] sm:border sm:border-slate-700 sm:shadow-2xl sm:shadow-slate-950/60">
+        {showAppHeader && (
+          <AppHeader
+            isNotificationOn={smartNotificationsEnabled}
+            subtitle={headerSubtitle}
+            toast={headerToast}
+            onOpenProfile={() => {
+              setScreen("profile");
+            }}
+            onToggleNotification={handleToggleSmartNotifications}
+          />
+        )}
+
         {screen !== "welcome" && screen !== "loading" && screen !== "onboarding" && screenHistory.length > 0 && (
           <button
             className="mx-4 mt-4 w-fit rounded-full bg-[#EAF7F6] px-4 py-2 text-sm font-bold text-teal-900 sm:mx-5 sm:mt-5"
@@ -2001,12 +2507,29 @@ function App() {
         {screen === "save-plan" && (
           <SavePlanScreen
             authStatus={authStatus}
+            notificationPermission={notificationPermission}
             syncMessage={syncMessage}
             syncStatus={syncStatus}
             userEmail={session?.user.email ?? ""}
-            onEmailSignIn={handleEmailSignIn}
-            onManualSync={() => void saveCloudState("Saved to Supabase.")}
-            onSkip={() => setScreen("weekly-plan")}
+            onEnableNotifications={handleToggleSmartNotifications}
+            onManualSync={() => void saveCloudState("Saved online.")}
+            onPasswordAuth={handlePasswordAuth}
+            onPasswordReset={handlePasswordReset}
+            onSkip={() => setScreen("home")}
+          />
+        )}
+        {screen === "home" && weeklyPlan && (
+          <HomeScreen
+            activitySummary={todaysActivitySummary}
+            completion={completion}
+            nutritionPlan={nutritionPlan}
+            plan={weeklyPlan}
+            profile={profile}
+            resumeDayIndex={resumeDayIndex}
+            onOpenExercise={() => navigateMainTab("exercise")}
+            onOpenNutrition={() => navigateMainTab("nutrition")}
+            onOpenProgress={() => navigateMainTab("progress")}
+            onStartWorkout={openDay}
           />
         )}
         {screen === "weekly-plan" && (
@@ -2024,7 +2547,12 @@ function App() {
             day={todaysPlan}
             completion={completion}
             exerciseSelection={exerciseSelection}
+            log={todaysWorkoutLog}
+            activitySummary={todaysActivitySummary}
             onChooseExerciseOption={chooseExerciseOption}
+            onToggleItemTimer={toggleWorkoutItemTimer}
+            onUpdateExerciseSetLog={updateExerciseSetLog}
+            onUpdateWorkoutWeight={updateWorkoutWeight}
             onUpdateExerciseStatus={updateExerciseStatus}
             onOpenVideo={setActiveVideo}
             onBackToWeek={() => setScreen("weekly-plan")}
@@ -2032,7 +2560,15 @@ function App() {
           />
         )}
         {screen === "check-in" && (
-          <CheckInScreen checkIn={checkIn} setCheckIn={setCheckIn} onSave={handleSaveCheckIn} />
+          <CheckInScreen
+            activitySummary={todaysActivitySummary}
+            day={todaysPlan}
+            log={todaysWorkoutLog}
+            checkIn={checkIn}
+            setCheckIn={setCheckIn}
+            onUpdateWorkoutWeight={updateWorkoutWeight}
+            onSave={handleSaveCheckIn}
+          />
         )}
         {screen === "adaptation" && (
           <AdaptationScreen
@@ -2050,23 +2586,17 @@ function App() {
             isLoading={isNutritionLoading}
             nutritionPlan={nutritionPlan}
             profile={profile}
-            weightLog={weightLog}
-            onBodyGoalChange={handleBodyGoalChange}
             onDietPreferenceChange={handleDietPreferenceChange}
-            onLogWeight={handleWeeklyWeightLog}
-            onRefresh={() => void refreshNutritionPlan(profile, true)}
           />
         )}
         {screen === "progress" && (
           <ProgressScreen
             completion={completion}
+            exerciseSelection={exerciseSelection}
             monthlyProgress={monthlyProgress}
-            notificationPermission={notificationPermission}
             plan={weeklyPlan}
-            reminderSettings={reminderSettings}
-            onDisableReminders={handleDisableReminders}
-            onEnableReminders={handleEnableReminders}
-            onReminderTimeChange={handleReminderTimeChange}
+            workoutLogs={workoutLogs}
+            onOpenDay={openDay}
           />
         )}
         {screen === "profile" && (
@@ -2077,8 +2607,11 @@ function App() {
             syncMessage={syncMessage}
             syncStatus={syncStatus}
             userEmail={session?.user.email ?? ""}
-            onEmailSignIn={handleEmailSignIn}
-            onManualSync={() => void saveCloudState("Saved to Supabase.")}
+            onManualSync={() => void saveCloudState("Saved online.")}
+            onPasswordAuth={handlePasswordAuth}
+            onPasswordReset={handlePasswordReset}
+            onPasswordUpdate={handlePasswordUpdate}
+            onProfileUpdate={handleProfileUpdate}
             onSignOut={handleSignOut}
           />
         )}
@@ -2142,8 +2675,9 @@ function OnboardingScreen({
     if (!profile.bmi) return "BMI appears here after height and weight";
     return `BMI: ${profile.bmi} - ${profile.bmiCategory}`;
   }, [profile.bmi, profile.bmiCategory]);
+  const fieldErrors = useMemo(() => getOnboardingFieldErrors(profile), [profile]);
 
-  const canSubmit = onboardingStep === 2 && profileStepReady && Boolean(profile.height && profile.weight);
+  const canSubmit = onboardingStep === 2 && profileStepReady && isValidOnboardingProfile(profile);
   const recommendation = useMemo(
     () => getWorkoutRecommendation(profile.goal, profile.experienceLevel),
     [profile.goal, profile.experienceLevel],
@@ -2197,6 +2731,14 @@ function OnboardingScreen({
 
             <ChipGroup
               columns="grid-cols-3"
+              label="Body goal"
+              options={["Lose weight slowly", "Maintain weight", "Gain muscle slowly"]}
+              value={profile.bodyGoal}
+              onChange={(value) => updateProfile("bodyGoal", value as UserProfile["bodyGoal"])}
+            />
+
+            <ChipGroup
+              columns="grid-cols-3"
               label="Your gym experience"
               options={["First time", "Beginner", "Restarting after break"]}
               value={profile.experienceLevel}
@@ -2235,15 +2777,20 @@ function OnboardingScreen({
           <>
             <section className="grid gap-3 rounded-3xl border border-teal-100 bg-white p-4">
               <TextField
+                error={fieldErrors.name}
+                helper="Only alphabet letters are accepted."
                 label="Name"
                 placeholder="Your name"
                 value={profile.name}
-                onChange={(value) => updateProfile("name", value)}
+                onChange={(value) => updateProfile("name", cleanAlphabetName(value))}
               />
               <NumberField
+                error={fieldErrors.age}
+                helper="Accepted range: 16 to 60 years."
                 label="Age"
+                max={VALUE_RULES.age.max}
+                min={VALUE_RULES.age.min}
                 placeholder="Your age"
-                required={false}
                 suffix="years"
                 value={profile.age}
                 onChange={(value) => updateProfile("age", value)}
@@ -2267,8 +2814,26 @@ function OnboardingScreen({
             <section className="grid gap-3 rounded-3xl border border-teal-100 bg-white p-4">
               <h2 className="text-[15px] font-black text-slate-900">Your body info</h2>
               <div className="grid grid-cols-2 gap-3">
-                <NumberField label="Height" suffix="cm" value={profile.height} onChange={(value) => updateProfile("height", value)} />
-                <NumberField label="Weight" suffix="kg" value={profile.weight} onChange={(value) => updateProfile("weight", value)} />
+                <NumberField
+                  error={fieldErrors.height}
+                  helper="135 to 215 cm"
+                  label="Height"
+                  max={VALUE_RULES.height.max}
+                  min={VALUE_RULES.height.min}
+                  suffix="cm"
+                  value={profile.height}
+                  onChange={(value) => updateProfile("height", value)}
+                />
+                <NumberField
+                  error={fieldErrors.weight}
+                  helper="30 to 150 kg"
+                  label="Weight"
+                  max={VALUE_RULES.weight.max}
+                  min={VALUE_RULES.weight.min}
+                  suffix="kg"
+                  value={profile.weight}
+                  onChange={(value) => updateProfile("weight", value)}
+                />
               </div>
               <div className="rounded-2xl border border-teal-100 bg-[#EAF7F6] p-3">
                 <p className="text-sm font-bold text-slate-700">{bmiLabel}</p>
@@ -2364,26 +2929,34 @@ function LoadingScreen() {
 
 function SavePlanScreen({
   authStatus,
+  notificationPermission,
   syncStatus,
   syncMessage,
   userEmail,
-  onEmailSignIn,
+  onEnableNotifications,
   onManualSync,
+  onPasswordAuth,
+  onPasswordReset,
   onSkip,
 }: {
   authStatus: AuthStatus;
+  notificationPermission: ReminderPermission;
   syncStatus: SyncStatus;
   syncMessage: string;
   userEmail: string;
-  onEmailSignIn: (email: string) => Promise<boolean>;
+  onEnableNotifications: () => void;
   onManualSync: () => void;
+  onPasswordAuth: (email: string, password: string, mode: AuthMode) => Promise<boolean>;
+  onPasswordReset: (email: string) => Promise<boolean>;
   onSkip: () => void;
 }) {
   const isSignedIn = authStatus === "signed-in";
   const isBusy = authStatus === "checking" || syncStatus === "loading" || syncStatus === "saving";
+  const canUseCloudSave = authStatus !== "unconfigured";
+  const notificationsOn = notificationPermission === "granted";
 
   return (
-    <section className="flex min-h-[100dvh] flex-col gap-4 p-4 sm:min-h-[calc(100vh-2.5rem)] sm:gap-5 sm:p-5">
+    <section className="flex min-h-[100dvh] flex-col gap-4 p-4 pb-24 sm:min-h-[calc(100vh-2.5rem)] sm:gap-5 sm:p-5 sm:pb-24">
       <ScreenTitle icon={<Cloud size={22} />} title="Save Your Plan" subtitle="Keep your profile, workouts, and progress ready when you come back." />
 
       <div className="rounded-3xl border border-[#334155] bg-[#273449] p-4 sm:p-5">
@@ -2393,28 +2966,21 @@ function SavePlanScreen({
         </h2>
         <p className="mt-3 leading-7 text-[#CBD5E1]">
           {isSignedIn
-            ? `Signed in${userEmail ? ` as ${userEmail}` : ""}. Sync your latest plan before opening Week 1.`
-            : "Your plan is already saved on this device. Email backup is optional for safer recovery."}
+            ? `Signed in${userEmail ? ` as ${userEmail}` : ""}.`
+            : "Saved on this device."}
         </p>
       </div>
 
-      <p className={`rounded-2xl px-4 py-3 text-sm font-bold ${syncStatus === "error" ? "bg-red-500/15 text-red-200" : "bg-[#0F172A] text-[#CBD5E1]"}`}>
-        {syncMessage}
-      </p>
+      <NotificationPromptCard disabled={notificationsOn} notificationPermission={notificationPermission} onEnable={onEnableNotifications} />
 
-      {authStatus === "unconfigured" ? (
-        <div className="rounded-3xl border border-[#334155] bg-[#1E293B] p-4 sm:p-5">
-          <p className="text-lg font-black text-white">Supabase is not connected yet</p>
-          <p className="mt-2 leading-7 text-[#CBD5E1]">
-            Add these two values in `.env.local`, restart the server, and this screen will show email backup.
-          </p>
-          <p className="mt-4 rounded-2xl bg-[#0F172A] p-4 font-mono text-xs leading-6 text-[#CBD5E1]">
-            VITE_SUPABASE_URL
-            <br />
-            VITE_SUPABASE_PUBLISHABLE_KEY
-          </p>
-        </div>
-      ) : isSignedIn ? (
+      <SaveStatusRow
+        canUseCloudSave={canUseCloudSave}
+        isSignedIn={isSignedIn}
+        message={syncMessage}
+        status={syncStatus}
+      />
+
+      {isSignedIn ? (
         <button
           className="flex min-h-[3.25rem] items-center justify-center gap-2 rounded-2xl bg-[#3B82F6] px-5 font-black text-white disabled:opacity-60 sm:min-h-14"
           disabled={isBusy}
@@ -2424,12 +2990,11 @@ function SavePlanScreen({
           <Cloud size={20} />
           Sync My Plan
         </button>
+      ) : canUseCloudSave ? (
+        <PasswordBackupForm disabled={isBusy} onAuth={onPasswordAuth} onResetPassword={onPasswordReset} />
       ) : (
-        <div className="grid gap-3">
-          <EmailLinkBackupForm
-            disabled={isBusy}
-            onSendLink={onEmailSignIn}
-          />
+        <div className="rounded-3xl border border-[#334155] bg-[#1E293B] p-4">
+          <SaveMiniItem icon={<CheckCircle2 size={18} />} label="Device save on" />
         </div>
       )}
 
@@ -2445,26 +3010,111 @@ function SavePlanScreen({
   );
 }
 
-function EmailLinkBackupForm({
+function SaveStatusRow({
+  canUseCloudSave,
+  isSignedIn,
+  message,
+  status,
+}: {
+  canUseCloudSave: boolean;
+  isSignedIn: boolean;
+  message: string;
+  status: SyncStatus;
+}) {
+  if (status === "error" && message) {
+    return (
+      <div className="flex items-center gap-3 rounded-2xl bg-red-500/15 px-4 py-3 text-sm font-bold text-red-200">
+        <Cloud size={18} />
+        <span>{message}</span>
+      </div>
+    );
+  }
+
+  if (isSignedIn) {
+    return <SaveMiniItem icon={<Cloud size={18} />} label={message || "Online save on"} />;
+  }
+
+  return <SaveMiniItem icon={<CheckCircle2 size={18} />} label={canUseCloudSave ? "Device save on" : "Saved on this device"} />;
+}
+
+function SaveMiniItem({ icon, label }: { icon: React.ReactNode; label: string }) {
+  return (
+    <div className="flex min-h-12 items-center gap-3 rounded-2xl bg-[#0F172A] px-4 text-sm font-black text-[#CBD5E1]">
+      <span className="grid h-8 w-8 place-items-center rounded-xl bg-[#273449] text-[#22C55E]">{icon}</span>
+      <span>{label}</span>
+    </div>
+  );
+}
+
+function NotificationPromptCard({
   disabled,
-  onSendLink,
+  notificationPermission,
+  onEnable,
 }: {
   disabled: boolean;
-  onSendLink: (email: string) => Promise<boolean>;
+  notificationPermission: ReminderPermission;
+  onEnable: () => void;
 }) {
-  const [email, setEmail] = useState("");
-  const [linkSent, setLinkSent] = useState(false);
+  const isDenied = notificationPermission === "denied";
+  const isUnsupported = notificationPermission === "unsupported";
 
-  async function sendLink() {
-    const sent = await onSendLink(email);
-    if (sent) setLinkSent(true);
+  if (disabled) {
+    return (
+      <section className="rounded-3xl border border-[#334155] bg-[#1E293B] p-4">
+        <p className="text-sm font-black uppercase tracking-wide text-[#F97316]">Notifications on</p>
+        <p className="mt-2 text-sm font-semibold leading-6 text-[#CBD5E1]">GymBuddy can send workout nudges from this browser.</p>
+      </section>
+    );
   }
 
   return (
     <div className="grid gap-3 rounded-3xl border border-[#334155] bg-[#1E293B] p-4">
       <div>
-        <p className="text-sm font-black text-white">Add email backup</p>
-        <p className="mt-1 text-sm font-semibold leading-6 text-[#CBD5E1]">No password needed. We will send a secure link to back up this device-saved plan.</p>
+        <p className="text-sm font-black uppercase tracking-wide text-[#F97316]">Workout nudges</p>
+        <p className="mt-1 text-sm font-semibold leading-6 text-[#CBD5E1]">
+          Turn on notifications so GymBuddy can remind you to keep the week moving.
+        </p>
+      </div>
+      <button
+        className="flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-[#3B82F6] px-4 text-sm font-black text-white disabled:opacity-60"
+        disabled={isDenied || isUnsupported}
+        onClick={onEnable}
+        type="button"
+      >
+        <Timer size={18} />
+        Turn On Notifications
+      </button>
+      {(isDenied || isUnsupported) && <p className="text-xs font-bold leading-5 text-[#CBD5E1]">Notifications are not available right now. You can still use the plan normally.</p>}
+    </div>
+  );
+}
+
+function PasswordBackupForm({
+  disabled,
+  onAuth,
+  onResetPassword,
+}: {
+  disabled: boolean;
+  onAuth: (email: string, password: string, mode: AuthMode) => Promise<boolean>;
+  onResetPassword: (email: string) => Promise<boolean>;
+}) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [mode, setMode] = useState<AuthMode>("sign-up");
+
+  return (
+    <div className="grid gap-3 rounded-3xl border border-[#334155] bg-[#1E293B] p-4">
+      <div>
+        <p className="text-sm font-black text-white">{mode === "sign-up" ? "Create account" : "Sign in"}</p>
+        <p className="mt-1 text-sm font-semibold text-[#CBD5E1]">Email + password</p>
+      </div>
+      <div className="grid grid-cols-2 gap-2 rounded-2xl bg-[#0F172A] p-1">
+        <button className={`min-h-10 rounded-xl text-sm font-black ${mode === "sign-up" ? "bg-[#3B82F6] text-white" : "text-[#CBD5E1]"}`} onClick={() => setMode("sign-up")} type="button">
+          Create
+        </button>
+        <button className={`min-h-10 rounded-xl text-sm font-black ${mode === "sign-in" ? "bg-[#3B82F6] text-white" : "text-[#CBD5E1]"}`} onClick={() => setMode("sign-in")} type="button">
+          Sign in
+        </button>
       </div>
       <input
         className="min-h-12 rounded-2xl border border-[#334155] bg-[#0F172A] px-4 font-semibold text-white outline-none placeholder:text-slate-500 focus:border-[#3B82F6]"
@@ -2474,23 +3124,334 @@ function EmailLinkBackupForm({
         value={email}
         onChange={(event) => setEmail(event.target.value)}
       />
+      <input
+        className="min-h-12 rounded-2xl border border-[#334155] bg-[#0F172A] px-4 font-semibold text-white outline-none placeholder:text-slate-500 focus:border-[#3B82F6]"
+        minLength={6}
+        placeholder="Password"
+        type="password"
+        value={password}
+        onChange={(event) => setPassword(event.target.value)}
+      />
       <button
         className="flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-[#3B82F6] px-4 text-sm font-black text-white disabled:opacity-60"
         disabled={disabled}
-        onClick={sendLink}
+        onClick={() => void onAuth(email, password, mode)}
         type="button"
       >
         <Mail size={18} />
-        {linkSent ? "Resend email link" : "Send email link"}
+        {mode === "sign-up" ? "Create Account" : "Sign In"}
       </button>
-
-      {linkSent && (
-        <p className="rounded-2xl bg-[#0F172A] p-3 text-xs font-bold leading-5 text-[#CBD5E1]">
-          Open the link on this same browser/device. Your profile and progress are also saved locally, so you can continue even before backup is complete.
-        </p>
+      {mode === "sign-in" && (
+        <button
+          className="min-h-10 text-sm font-black text-[#B3C5FF] disabled:opacity-60"
+          disabled={disabled}
+          onClick={() => void onResetPassword(email)}
+          type="button"
+        >
+          Forgot password?
+        </button>
       )}
     </div>
   );
+}
+
+function PasswordUpdateForm({ disabled, onUpdate }: { disabled: boolean; onUpdate: (password: string) => Promise<boolean> }) {
+  const [password, setPassword] = useState("");
+
+  async function updatePassword() {
+    const didUpdate = await onUpdate(password);
+    if (didUpdate) setPassword("");
+  }
+
+  return (
+    <div className="grid gap-3 rounded-3xl border border-[#334155] bg-[#1E293B] p-4">
+      <p className="text-sm font-black text-white">Update password</p>
+      <input
+        className="min-h-12 rounded-2xl border border-[#334155] bg-[#0F172A] px-4 font-semibold text-white outline-none placeholder:text-slate-500 focus:border-[#3B82F6]"
+        minLength={6}
+        placeholder="New password"
+        type="password"
+        value={password}
+        onChange={(event) => setPassword(event.target.value)}
+      />
+      <button
+        className="min-h-12 rounded-2xl bg-[#ABD600] px-4 text-sm font-black text-[#283500] disabled:opacity-60"
+        disabled={disabled}
+        onClick={() => void updatePassword()}
+        type="button"
+      >
+        Save password
+      </button>
+    </div>
+  );
+}
+
+function getHeaderSubtitle(screen: Screen) {
+  if (screen === "home") return "Home";
+  if (screen === "nutrition") return "Nutrition Coach";
+  if (screen === "progress") return "Progress Check";
+  if (screen === "profile") return "Profile";
+  return "Workout Coach";
+}
+
+function AppHeader({
+  isNotificationOn,
+  subtitle,
+  toast,
+  onOpenProfile,
+  onToggleNotification,
+}: {
+  isNotificationOn: boolean;
+  subtitle: string;
+  toast: string;
+  onOpenProfile: () => void;
+  onToggleNotification: () => void;
+}) {
+  return (
+    <header className="sticky top-0 z-40 border-b border-[#334155] bg-[#0F172A]/95 px-4 py-3 backdrop-blur sm:px-5">
+      <div className="relative flex min-h-12 items-center justify-between">
+        <button
+          className="grid h-11 w-11 place-items-center rounded-2xl text-[#CBD5E1] transition active:scale-[0.98]"
+          onClick={onOpenProfile}
+          type="button"
+          aria-label="Open profile"
+        >
+          <User size={25} />
+        </button>
+
+        <div className="text-center">
+          <p className="text-xl font-black leading-tight tracking-wide text-white">GymBuddy</p>
+          <p className="text-[11px] font-black uppercase tracking-wide text-[#ABD600]">{subtitle}</p>
+        </div>
+
+        <button
+          className={`grid h-11 w-11 place-items-center rounded-2xl transition active:scale-[0.98] ${isNotificationOn ? "text-[#ABD600]" : "text-[#CBD5E1]"}`}
+          onClick={onToggleNotification}
+          type="button"
+          aria-label={isNotificationOn ? "Turn smart notifications off" : "Turn smart notifications on"}
+        >
+          <Bell fill={isNotificationOn ? "currentColor" : "none"} size={24} />
+        </button>
+
+      </div>
+
+      {toast && (
+        <div className="absolute left-1/2 top-[calc(100%+0.75rem)] z-50 w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 rounded-2xl border border-[#334155] bg-[#1E293B] px-4 py-3 text-center text-sm font-black text-white shadow-xl shadow-black/30">
+          {toast}
+        </div>
+      )}
+    </header>
+  );
+}
+
+function HomeScreen({
+  activitySummary,
+  completion,
+  nutritionPlan,
+  plan,
+  profile,
+  resumeDayIndex,
+  onOpenExercise,
+  onOpenNutrition,
+  onOpenProgress,
+  onStartWorkout,
+}: {
+  activitySummary: ReturnType<typeof getWorkoutActivitySummary>;
+  completion: ExerciseCompletion;
+  nutritionPlan: NutritionPlan | null;
+  plan: WeeklyPlan;
+  profile: UserProfile;
+  resumeDayIndex: number;
+  onOpenExercise: () => void;
+  onOpenNutrition: () => void;
+  onOpenProgress: () => void;
+  onStartWorkout: (dayIndex: number) => void;
+}) {
+  const weekly = getWeeklyProgress(plan, completion);
+  const homeTarget = getHomeTargetDay(plan, resumeDayIndex);
+  const targetDay = homeTarget.day;
+  const targetProgress = targetDay ? getDayProgress(targetDay, completion) : null;
+  const nutrition = nutritionPlan ?? createFallbackNutritionPlan(profile);
+  const firstName = profile.name.trim().split(/\s+/)[0] || "Champ";
+  const calories = nutrition.targetCalories ? `${nutrition.targetCalories}` : "--";
+  const protein = nutrition.macros ? `${nutrition.macros.protein}g` : "--";
+  const water = nutrition.macros ? `${nutrition.macros.waterLiters.toFixed(1)}L` : "--";
+  const workoutMinutes = getWorkoutDurationMinutes(profile);
+  const goalPercent = targetDay?.isRestDay ? 100 : targetProgress ? targetProgress.percent : weekly.percent;
+  const actionLabel = targetDay?.isRestDay ? "Review Recovery" : targetProgress && targetProgress.done + targetProgress.partial > 0 ? `Continue ${targetDay?.day ?? "Workout"}` : `Start ${targetDay?.day ?? "Workout"}`;
+
+  return (
+    <section className="flex flex-1 flex-col gap-4 bg-[#0F172A] p-4 pb-24 pt-4 sm:gap-5 sm:p-5 sm:pb-28 sm:pt-5">
+      <div>
+        <h1 className="text-3xl font-black leading-tight text-white">Hello, {firstName}</h1>
+        <p className="mt-2 text-base font-semibold text-[#CBD5E1]">Walk in confident. Your plan is ready</p>
+      </div>
+
+      <button
+        className="rounded-3xl border border-[#334155] bg-gradient-to-br from-[#1E293B] to-[#111827] p-5 text-left shadow-xl shadow-black/20 transition active:scale-[0.99]"
+        onClick={() => (targetDay ? onStartWorkout(homeTarget.index) : onOpenExercise())}
+        type="button"
+      >
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-sm font-black uppercase tracking-wide text-[#CBD5E1]">Today&apos;s goal</p>
+          <span className="rounded-full bg-[#273449] px-3 py-1 text-xs font-black text-[#F97316]">{targetDay?.day ?? `Week ${plan.week}`}</span>
+        </div>
+        <div className="mt-6 flex flex-col items-center">
+          <CircularProgress percent={goalPercent} />
+          <h2 className="mt-4 text-center text-2xl font-black text-white">{targetDay?.title ?? "Week complete"}</h2>
+          <p className="mt-1 text-center text-sm font-semibold text-[#CBD5E1]">
+            {targetDay?.isRestDay ? "Recovery day. Keep it light." : targetProgress ? `${targetProgress.done}/${targetProgress.total} exercises done` : `${weekly.percent}% weekly progress`}
+          </p>
+        </div>
+        <div className="mt-6 grid grid-cols-3 gap-2 text-center">
+          <HomeStat value={calories} label="KCAL" />
+          <HomeStat value={`${workoutMinutes}`} label="MIN" />
+          <HomeStat value={`${weekly.percent}%`} label="WEEK" />
+        </div>
+      </button>
+
+      <section className="rounded-3xl border border-[#334155] bg-[#111827] p-4">
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-xl font-black text-white">Today&apos;s Focus</h2>
+          <button className="rounded-full bg-[#273449] px-3 py-2 text-[#CBD5E1] transition active:scale-[0.98]" onClick={onOpenProgress} type="button" aria-label="Open progress">
+            <BarChart3 size={18} />
+          </button>
+        </div>
+        <div className="mt-4 grid gap-3">
+          <HomeProgressItem icon={<Dumbbell size={20} />} label="Workout" percent={goalPercent} value={targetProgress ? `${targetProgress.done}/${targetProgress.total}` : `${weekly.percent}%`} tone="blue" />
+          <HomeProgressItem icon={<Utensils size={20} />} label="Protein goal" percent={100} value={protein} tone="orange" onClick={onOpenNutrition} />
+          <HomeProgressItem icon={<Droplet size={20} />} label="Water goal" percent={100} value={water} tone="cyan" onClick={onOpenNutrition} />
+          <HomeProgressItem icon={<Timer size={20} />} label="Active" percent={Math.min(100, Math.round((activitySummary.activeSeconds / Math.max(1, workoutMinutes * 60)) * 100))} value={formatDuration(activitySummary.activeSeconds)} tone="green" />
+        </div>
+      </section>
+
+      <section
+        className="relative min-h-[230px] overflow-hidden rounded-3xl border border-[#334155] bg-[#111827] p-4 shadow-xl shadow-black/25"
+        style={{
+          backgroundImage:
+            "linear-gradient(180deg, rgba(15,23,42,0.15), rgba(15,23,42,0.92)), url('https://images.unsplash.com/photo-1517836357463-d25dfeac3438?auto=format&fit=crop&w=900&q=80')",
+          backgroundPosition: "center",
+          backgroundSize: "cover",
+        }}
+      >
+        <div className="absolute right-4 top-4 rounded-full border border-white/20 bg-[#273449]/85 px-3 py-1 text-xs font-black text-[#CBD5E1] backdrop-blur">
+          {profile.gymType}
+        </div>
+        <div className="flex h-full min-h-[198px] flex-col justify-end">
+          <p className="text-sm font-black uppercase tracking-wide text-[#CBD5E1]">Recommended for you</p>
+          <h2 className="mt-2 text-2xl font-black leading-tight text-white">{targetDay?.title ?? "Review your week"}</h2>
+          <div className="mt-3 flex items-center gap-4 text-sm font-bold text-[#CBD5E1]">
+            <span className="inline-flex items-center gap-1">
+              <Timer size={16} />
+              {workoutMinutes} min
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <Flame size={16} />
+              {calories} kcal target
+            </span>
+          </div>
+          <button
+            className="mt-5 flex min-h-14 w-full items-center justify-center gap-2 rounded-2xl bg-[#3B82F6] px-5 text-base font-black text-white shadow-xl shadow-blue-950/30 transition active:scale-[0.98]"
+            onClick={() => (targetDay ? onStartWorkout(homeTarget.index) : onOpenExercise())}
+            type="button"
+          >
+            {actionLabel}
+            <Play size={18} />
+          </button>
+        </div>
+      </section>
+    </section>
+  );
+}
+
+function getHomeTargetDay(plan: WeeklyPlan, resumeDayIndex: number) {
+  const safeIndex = Math.min(Math.max(resumeDayIndex, 0), plan.days.length - 1);
+  return {
+    day: plan.days[safeIndex] ?? null,
+    index: safeIndex,
+  };
+}
+
+function HomeStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="text-lg font-black leading-none text-white">{value}</p>
+      <p className="mt-1 text-[10px] font-black uppercase tracking-wide text-[#94A3B8]">{label}</p>
+    </div>
+  );
+}
+
+function CircularProgress({ percent }: { percent: number }) {
+  const safePercent = Math.min(100, Math.max(0, percent));
+  return (
+    <div
+      className="grid h-40 w-40 place-items-center rounded-full"
+      style={{
+        background: `conic-gradient(#A3E635 ${safePercent * 3.6}deg, #334155 0deg)`,
+      }}
+    >
+      <div className="grid h-28 w-28 place-items-center rounded-full bg-[#111827] text-center">
+        <div>
+          <p className="text-3xl font-black leading-none text-white">{safePercent}%</p>
+          <p className="mt-1 text-sm font-black text-[#CBD5E1]">Complete</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function HomeProgressItem({
+  icon,
+  label,
+  onClick,
+  percent,
+  tone,
+  value,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  onClick?: () => void;
+  percent: number;
+  tone: "blue" | "orange" | "cyan" | "green";
+  value: string;
+}) {
+  const toneClass = {
+    blue: "bg-[#3B82F6]/20 text-[#93C5FD]",
+    orange: "bg-[#F97316]/20 text-[#FDBA74]",
+    cyan: "bg-[#06B6D4]/20 text-[#67E8F9]",
+    green: "bg-[#22C55E]/20 text-[#86EFAC]",
+  }[tone];
+  const barClass = {
+    blue: "bg-[#3B82F6]",
+    orange: "bg-[#F97316]",
+    cyan: "bg-[#06B6D4]",
+    green: "bg-[#22C55E]",
+  }[tone];
+
+  const content = (
+    <>
+      <span className={`grid h-12 w-12 shrink-0 place-items-center rounded-2xl ${toneClass}`}>{icon}</span>
+      <span className="min-w-0 flex-1">
+        <span className="flex items-center justify-between gap-3">
+          <span className="truncate text-base font-black text-white">{label}</span>
+          <span className="shrink-0 text-sm font-black text-[#CBD5E1]">{value}</span>
+        </span>
+        <span className="mt-2 block h-2 overflow-hidden rounded-full bg-[#334155]">
+          <span className={`block h-full rounded-full ${barClass}`} style={{ width: `${Math.min(100, Math.max(0, percent))}%` }} />
+        </span>
+      </span>
+    </>
+  );
+
+  if (onClick) {
+    return (
+      <button className="flex w-full items-center gap-3 rounded-2xl border border-[#1F2937] bg-[#1E293B] p-3 text-left transition active:scale-[0.99]" onClick={onClick} type="button">
+        {content}
+      </button>
+    );
+  }
+
+  return <div className="flex items-center gap-3 rounded-2xl border border-[#1F2937] bg-[#1E293B] p-3">{content}</div>;
 }
 
 function WeeklyPlanScreen({
@@ -2509,19 +3470,35 @@ function WeeklyPlanScreen({
   onStartWorkout: () => void;
 }) {
   const resumeProgress = resumeDay ? getDayProgress(resumeDay, completion) : null;
-  const dayCardRefs = useRef<Array<HTMLDivElement | null>>([]);
+  const initialFocusedIndex = plan && resumeDay ? Math.max(0, plan.days.findIndex((day) => day.day === resumeDay.day)) : 0;
+  const [focusedDayIndex, setFocusedDayIndex] = useState(initialFocusedIndex);
+  const focusedDay = plan?.days[focusedDayIndex] ?? plan?.days[0] ?? null;
 
-  function jumpToDay(index: number) {
-    dayCardRefs.current[index]?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }
+  useEffect(() => {
+    if (!plan) return;
+    setFocusedDayIndex((current) => Math.min(current, plan.days.length - 1));
+  }, [plan]);
 
   return (
-    <section className="flex flex-1 flex-col gap-4 p-4 pt-3 sm:gap-5 sm:p-5 sm:pt-4">
-      <ScreenTitle icon={<Wand2 size={22} />} title="Your Week 1 Plan" subtitle="Built from your goal, gym, time, and confidence." />
-      <div className="rounded-3xl bg-gradient-to-br from-[#40B5AD] to-[#9EDCD8] p-4 text-slate-950 sm:p-5">
-        <p className="text-sm font-black uppercase tracking-wide text-teal-950">Week 1 plan ready</p>
-        <h2 className="mt-2 text-2xl font-black">{plan?.title ?? "Create your plan first"}</h2>
-        <p className="mt-3 leading-7 text-slate-700">{plan?.note}</p>
+    <section className="flex flex-1 flex-col gap-4 p-4 pb-24 pt-3 sm:gap-5 sm:p-5 sm:pb-28 sm:pt-4">
+      <ScreenTitle icon={<Wand2 size={22} />} title="Your Week 1 Plan" subtitle="Start with Day 1." />
+      <div className="rounded-3xl border border-[#334155] bg-[#273449] p-4 shadow-xl shadow-black/10 sm:p-5">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-xs font-black uppercase tracking-wide text-[#F97316]">Week 1 ready</p>
+            <h2 className="mt-2 text-2xl font-black leading-tight text-white">
+              {profile.name ? `${profile.name}'s Week 1 Plan` : "Your Week 1 Plan"}
+            </h2>
+          </div>
+          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-[#0F172A] text-[#22C55E]">
+            <CheckCircle2 size={22} />
+          </span>
+        </div>
+        <div className="mt-4 grid grid-cols-3 gap-2">
+          <PlanMiniChip label="Goal" value={profile.goal.replace("Build ", "")} />
+          <PlanMiniChip label="Gym" value={profile.gymType.replace(" gym", "")} />
+          <PlanMiniChip label="Time" value={profile.workoutDuration.replace(" minutes", "m")} />
+        </div>
       </div>
 
       {resumeDay && (
@@ -2546,7 +3523,7 @@ function WeeklyPlanScreen({
             {resumeDay.isRestDay
               ? "Today is a recovery day. Tap to open light mobility."
               : resumeProgress
-                ? `${resumeProgress.done}/${resumeProgress.total} exercises done. Tap to continue.`
+                ? `${resumeProgress.done}/${resumeProgress.total} exercises done. Tap to continue`
                 : "Tap to continue from where you left off."}
           </p>
           {!resumeDay.isRestDay && resumeProgress && <ProgressBar percent={resumeProgress.percent} />}
@@ -2555,27 +3532,18 @@ function WeeklyPlanScreen({
 
       {plan && <CalendarExportCard plan={plan} profile={profile} />}
 
-      {plan && <DayChipNavigator completion={completion} days={plan.days} onSelectDay={jumpToDay} />}
+      {plan && <DayChipNavigator activeIndex={focusedDayIndex} completion={completion} days={plan.days} onSelectDay={setFocusedDayIndex} />}
 
-      <div className="grid gap-3">
-        {plan?.days.map((day, index) => (
-          <div
-            key={day.day}
-            ref={(element) => {
-              dayCardRefs.current[index] = element;
-            }}
-          >
-            <DayPlanCard
-              completion={completion}
-              day={day}
-              gymType={profile.gymType}
-              onOpen={() => onOpenDay(index)}
-            />
-          </div>
-        ))}
-      </div>
+      {focusedDay && (
+        <DayPlanCard
+          completion={completion}
+          day={focusedDay}
+          gymType={profile.gymType}
+          onOpen={() => onOpenDay(focusedDayIndex)}
+        />
+      )}
 
-      <button className="mb-3 mt-1 flex min-h-[3.25rem] w-full items-center justify-center gap-2 rounded-2xl bg-[#3B82F6] px-5 font-black text-white shadow-xl shadow-blue-950/20 sm:mb-4 sm:mt-2 sm:min-h-14" onClick={onStartWorkout} type="button">
+      <button className="mt-1 flex min-h-[3.25rem] w-full items-center justify-center gap-2 rounded-2xl bg-[#3B82F6] px-5 font-black text-white shadow-xl shadow-blue-950/20 sm:mt-2 sm:min-h-14" onClick={onStartWorkout} type="button">
         {resumeDay?.isRestDay ? "Open Recovery Day" : `Continue ${resumeDay?.day ?? "Workout"}`}
         <ChevronRight size={20} />
       </button>
@@ -2583,7 +3551,26 @@ function WeeklyPlanScreen({
   );
 }
 
-function DayChipNavigator({ days, completion, onSelectDay }: { days: DayPlan[]; completion: ExerciseCompletion; onSelectDay: (dayIndex: number) => void }) {
+function PlanMiniChip({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0 rounded-2xl bg-[#0F172A] px-3 py-2">
+      <p className="text-[10px] font-black uppercase tracking-wide text-[#94A3B8]">{label}</p>
+      <p className="truncate text-xs font-black text-white">{value}</p>
+    </div>
+  );
+}
+
+function DayChipNavigator({
+  activeIndex,
+  days,
+  completion,
+  onSelectDay,
+}: {
+  activeIndex: number;
+  days: DayPlan[];
+  completion: ExerciseCompletion;
+  onSelectDay: (dayIndex: number) => void;
+}) {
   return (
     <section className="sticky top-0 z-10 -mx-4 border-y border-[#334155] bg-[#1E293B]/95 px-4 py-2.5 backdrop-blur sm:-mx-5 sm:px-5 sm:py-3">
       <div className="flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
@@ -2595,7 +3582,9 @@ function DayChipNavigator({ days, completion, onSelectDay }: { days: DayPlan[]; 
 
           return (
             <button
-              className="flex min-w-[74px] flex-col items-center justify-center rounded-2xl border border-[#334155] bg-[#273449] px-3 py-2 text-white transition active:scale-[0.98]"
+              className={`flex min-w-[74px] flex-col items-center justify-center rounded-2xl border px-3 py-2 text-white transition active:scale-[0.98] ${
+                activeIndex === index ? "border-[#3B82F6] bg-[#3B82F6]" : "border-[#334155] bg-[#273449]"
+              }`}
               key={day.day}
               onClick={() => onSelectDay(index)}
               type="button"
@@ -2631,9 +3620,6 @@ function CalendarExportCard({ plan, profile }: { plan: WeeklyPlan; profile: User
         <CalendarDays size={18} />
         Download calendar file
       </button>
-      <div className="mt-2 text-[11px] font-bold leading-5 text-[#94A3B8]">
-        After download: open Google Calendar on desktop &gt; Other calendars + &gt; Import &gt; choose this file.
-      </div>
     </div>
   );
 }
@@ -2694,7 +3680,12 @@ function TodayWorkoutScreen({
   day,
   completion,
   exerciseSelection,
+  log,
+  activitySummary,
   onChooseExerciseOption,
+  onToggleItemTimer,
+  onUpdateExerciseSetLog,
+  onUpdateWorkoutWeight,
   onUpdateExerciseStatus,
   onOpenVideo,
   onBackToWeek,
@@ -2703,58 +3694,116 @@ function TodayWorkoutScreen({
   day: DayPlan;
   completion: ExerciseCompletion;
   exerciseSelection: ExerciseSelection;
+  log: DailyWorkoutLog;
+  activitySummary: ReturnType<typeof getWorkoutActivitySummary>;
   onChooseExerciseOption: (id: string, selectedOption: "main" | "alternative") => void;
+  onToggleItemTimer: (day: DayPlan, itemId: string) => void;
+  onUpdateExerciseSetLog: (day: DayPlan, exerciseId: string, setIndex: number, key: keyof SetPerformanceLog, value: string) => void;
+  onUpdateWorkoutWeight: (day: DayPlan, key: "beforeWeight" | "afterWeight", value: string) => void;
   onUpdateExerciseStatus: (id: string, status: ExerciseStatus) => void;
   onOpenVideo: (video: VideoTarget) => void;
   onBackToWeek: () => void;
   onCheckIn: () => void;
 }) {
+  const [, setTimerTick] = useState(0);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setTimerTick((tick) => tick + 1), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
   if (day.isRestDay) {
     return (
-      <section className="flex flex-1 flex-col gap-4 p-4 pt-3 sm:gap-5 sm:p-5 sm:pt-4">
+      <section className="flex flex-1 flex-col gap-4 p-4 pb-24 pt-3 sm:gap-5 sm:p-5 sm:pb-28 sm:pt-4">
         <WorkoutBackButton onClick={onBackToWeek} />
         <ScreenTitle icon={<HeartPulse size={22} />} title="Recovery Day" subtitle={`${day.day}: ${day.title}`} />
         <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4 sm:p-5">
           <p className="text-lg font-black text-slate-950">{day.focus}</p>
           <p className="mt-2 leading-7 text-slate-600">Keep it light today. Rest is part of the plan, especially for beginners.</p>
         </div>
-        <WorkoutSection title="Optional recovery" subtitle="Only do this if your body feels fresh.">
+        <SimpleWorkoutSection title="Optional recovery" subtitle="Only do this if your body feels fresh.">
           {day.coolDown.map((activity) => (
-            <ActivityCard activity={activity} key={activity.id} onOpenVideo={onOpenVideo} />
+            <ActivityCard
+              activity={activity}
+              key={activity.id}
+              status={completion[activity.id] ?? "Not done"}
+              timer={getItemTimer(log, activity.id)}
+              onOpenVideo={onOpenVideo}
+              onToggleTimer={() => onToggleItemTimer(day, activity.id)}
+              onUpdateStatus={(status) => onUpdateExerciseStatus(activity.id, status)}
+            />
           ))}
-        </WorkoutSection>
+        </SimpleWorkoutSection>
       </section>
     );
   }
 
   return (
-    <section className="flex flex-1 flex-col gap-4 p-4 pt-3 sm:gap-5 sm:p-5 sm:pt-4">
+    <section className="flex flex-1 flex-col gap-4 p-4 pb-24 pt-3 sm:gap-5 sm:p-5 sm:pb-28 sm:pt-4">
       <WorkoutBackButton onClick={onBackToWeek} />
       <ScreenTitle icon={<Dumbbell size={22} />} title="Today's Workout" subtitle={`${day.day}: ${day.title}`} />
 
-      <WorkoutSection title="Warm-up" subtitle="Do these first so your body feels ready.">
+      <DailyWorkoutLogCard
+        activitySummary={activitySummary}
+        log={log}
+        onWeightChange={(key, value) => onUpdateWorkoutWeight(day, key, value)}
+      />
+
+      <WorkoutSection
+        loggedSeconds={activitySummary.warmUpSeconds}
+        title="Warm-up"
+        subtitle="Do these first so your body feels ready"
+      >
         {day.warmUp.map((activity) => (
-          <ActivityCard activity={activity} key={activity.id} onOpenVideo={onOpenVideo} />
+          <ActivityCard
+            activity={activity}
+            key={activity.id}
+            status={completion[activity.id] ?? "Not done"}
+            timer={getItemTimer(log, activity.id)}
+            onOpenVideo={onOpenVideo}
+            onToggleTimer={() => onToggleItemTimer(day, activity.id)}
+            onUpdateStatus={(status) => onUpdateExerciseStatus(activity.id, status)}
+          />
         ))}
       </WorkoutSection>
 
-      <div className="grid gap-3">
+      <WorkoutSection
+        loggedSeconds={activitySummary.workoutSeconds}
+        title="Exercises"
+        subtitle="Use the main option or switch to alternative if equipment is busy."
+      >
         {day.exercises.map((exercise) => (
           <ExerciseCard
             completionStatus={completion[exercise.id] ?? "Not done"}
             exercise={exercise}
             key={exercise.id}
             selectedOption={exerciseSelection[exercise.id] ?? "main"}
+            setLogs={log.setLogs[exercise.id]}
+            timer={getItemTimer(log, exercise.id)}
             onChooseOption={(selectedOption) => onChooseExerciseOption(exercise.id, selectedOption)}
             onOpenVideo={onOpenVideo}
+            onToggleTimer={() => onToggleItemTimer(day, exercise.id)}
+            onUpdateSetLog={(setIndex, key, value) => onUpdateExerciseSetLog(day, exercise.id, setIndex, key, value)}
             onUpdateStatus={(status) => onUpdateExerciseStatus(exercise.id, status)}
           />
         ))}
-      </div>
+      </WorkoutSection>
 
-      <WorkoutSection title="Cooldown" subtitle="Bring your heart rate down and recover better.">
+      <WorkoutSection
+        loggedSeconds={activitySummary.coolDownSeconds}
+        title="Cooldown"
+        subtitle="Bring your heart rate down and recover better."
+      >
         {day.coolDown.map((activity) => (
-          <ActivityCard activity={activity} key={activity.id} onOpenVideo={onOpenVideo} />
+          <ActivityCard
+            activity={activity}
+            key={activity.id}
+            status={completion[activity.id] ?? "Not done"}
+            timer={getItemTimer(log, activity.id)}
+            onOpenVideo={onOpenVideo}
+            onToggleTimer={() => onToggleItemTimer(day, activity.id)}
+            onUpdateStatus={(status) => onUpdateExerciseStatus(activity.id, status)}
+          />
         ))}
       </WorkoutSection>
 
@@ -2766,39 +3815,135 @@ function TodayWorkoutScreen({
   );
 }
 
-function WorkoutSection({ title, subtitle, children }: { title: string; subtitle: string; children: React.ReactNode }) {
+function SimpleWorkoutSection({ title, subtitle, children }: { title: string; subtitle: string; children: React.ReactNode }) {
   return (
     <section className="grid gap-3">
       <div>
-        <h2 className="text-lg font-black text-slate-950">{title}</h2>
-        <p className="text-sm font-semibold text-slate-500">{subtitle}</p>
+        <h2 className="text-lg font-black text-white">{title}</h2>
+        <p className="text-sm font-semibold text-[#CBD5E1]">{subtitle}</p>
       </div>
       <div className="grid gap-3">{children}</div>
     </section>
   );
 }
 
-function ActivityCard({ activity, onOpenVideo }: { activity: PlanActivity; onOpenVideo: (video: VideoTarget) => void }) {
+function DailyWorkoutLogCard({
+  activitySummary,
+  log,
+  onWeightChange,
+}: {
+  activitySummary: ReturnType<typeof getWorkoutActivitySummary>;
+  log: DailyWorkoutLog;
+  onWeightChange: (key: "beforeWeight" | "afterWeight", value: string) => void;
+}) {
+  return (
+    <section className="rounded-3xl border border-[#334155] bg-[#1E293B] p-4">
+      <p className="text-sm font-black uppercase tracking-wide text-[#F97316]">Today&apos;s session</p>
+      <div className="mt-3">
+        <WeightInput label="Before" value={log.beforeWeight} onChange={(value) => onWeightChange("beforeWeight", value)} />
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <MetricTile label="After weight" value={log.afterWeight ? `${log.afterWeight} kg` : "Check-in"} />
+        <MetricTile label="Active time" value={formatDuration(activitySummary.activeSeconds)} />
+        <MetricTile label="Rest time" value={formatDuration(activitySummary.restSeconds)} />
+      </div>
+    </section>
+  );
+}
+
+function WeightInput({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+  return (
+    <label className="grid gap-1 rounded-2xl bg-[#0F172A] p-3">
+      <span className="text-xs font-black text-[#CBD5E1]">{label} weight</span>
+      <div className="flex items-center gap-2">
+        <input
+          className="min-w-0 flex-1 bg-transparent text-base font-black text-white outline-none"
+          inputMode="decimal"
+          max={VALUE_RULES.weight.max}
+          min={VALUE_RULES.weight.min}
+          placeholder="kg"
+          step="0.1"
+          type="number"
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+        />
+        <span className="text-xs font-black text-[#CBD5E1]">kg</span>
+      </div>
+    </label>
+  );
+}
+
+function WorkoutSection({
+  title,
+  subtitle,
+  loggedSeconds,
+  children,
+}: {
+  title: string;
+  subtitle: string;
+  loggedSeconds: number;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="grid gap-3 pt-1">
+      <div className="flex items-end justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="text-2xl font-black leading-tight text-white">{title}</h2>
+          <p className="mt-1 text-sm font-semibold leading-5 text-[#CBD5E1]">{subtitle}</p>
+        </div>
+        <div className="shrink-0 rounded-2xl border border-[#334155] bg-[#1E293B] px-3 py-2 text-right">
+          <p className="text-[10px] font-black uppercase tracking-wide text-[#94A3B8]">Time logged</p>
+          <p className="text-sm font-black text-[#ABD600]">{formatDuration(loggedSeconds)}</p>
+        </div>
+      </div>
+      <div className="grid gap-3">{children}</div>
+    </section>
+  );
+}
+
+function ActivityCard({
+  activity,
+  status,
+  timer,
+  onOpenVideo,
+  onToggleTimer,
+  onUpdateStatus,
+}: {
+  activity: PlanActivity;
+  status: ExerciseStatus;
+  timer: WorkoutSectionLog;
+  onOpenVideo: (video: VideoTarget) => void;
+  onToggleTimer: () => void;
+  onUpdateStatus: (status: ExerciseStatus) => void;
+}) {
   const demoLink = getDemoLink(activity.name, activity.demoLink);
 
   return (
-    <article className="rounded-3xl border border-teal-100 bg-[#EAF7F6] p-4">
+    <article className="rounded-3xl border border-[#334155] bg-[#111827] p-4 shadow-lg shadow-black/10">
       <div className="flex items-start justify-between gap-3">
-        <div>
-          <h3 className="font-black text-slate-950">{activity.name}</h3>
-          <p className="mt-1 text-sm font-bold text-slate-600">
+        <div className="min-w-0">
+          <p className="text-[10px] font-black uppercase tracking-wide text-[#F97316]">Guide</p>
+          <h3 className="mt-1 font-black text-white">{activity.name}</h3>
+          <p className="mt-1 text-sm font-bold text-[#CBD5E1]">
             {activity.time} | {activity.sets} set | {activity.reps}
           </p>
-          <p className="mt-1 text-sm font-semibold text-teal-800">{activity.paceOrLoad}</p>
+          <p className="mt-1 text-sm font-semibold text-[#94A3B8]">{activity.paceOrLoad}</p>
         </div>
         <button
-          className="rounded-2xl bg-white px-3 py-2 text-xs font-black text-teal-900"
+          className="shrink-0 rounded-2xl bg-[#0066FF] px-3 py-2 text-xs font-black text-white"
           onClick={() => onOpenVideo({ title: activity.name, url: demoLink })}
           type="button"
         >
           Demo
         </button>
       </div>
+      <ItemTimerControl timer={timer} onToggle={onToggleTimer} />
+      <StatusButtonGroup
+        allowedStatuses={["Done", "Not done"]}
+        className="mt-3"
+        value={status}
+        onChange={onUpdateStatus}
+      />
     </article>
   );
 }
@@ -2820,92 +3965,224 @@ function ExerciseCard({
   exercise,
   selectedOption,
   completionStatus,
+  setLogs,
+  timer,
   onChooseOption,
   onOpenVideo,
+  onToggleTimer,
+  onUpdateSetLog,
   onUpdateStatus,
 }: {
   exercise: Exercise;
   selectedOption: "main" | "alternative";
   completionStatus: ExerciseStatus;
+  setLogs: SetPerformanceLog[] | undefined;
+  timer: WorkoutSectionLog;
   onChooseOption: (selectedOption: "main" | "alternative") => void;
   onOpenVideo: (video: VideoTarget) => void;
+  onToggleTimer: () => void;
+  onUpdateSetLog: (setIndex: number, key: keyof SetPerformanceLog, value: string) => void;
   onUpdateStatus: (status: ExerciseStatus) => void;
 }) {
   const activeOption = exercise[selectedOption];
   const activeDemoLink = getDemoLink(activeOption.name, activeOption.demoLink);
   const isTimeBased = /\b(sec|min|seconds|minutes)\b/i.test(activeOption.repsPerSet);
   const isBodyweightOnly = /bodyweight/i.test(activeOption.weightGuide) && !/\bkg|plate|stack|dumbbell|machine|cable\b/i.test(activeOption.weightGuide);
-  const effortInputClass = `mt-4 grid ${isBodyweightOnly ? "grid-cols-2" : "grid-cols-3"} gap-2`;
+  const includeWeight = !isBodyweightOnly;
+  const hasLoggedSets = Boolean(setLogs?.some((set) => set.weight || set.reps || set.duration));
+  const [showSetLog, setShowSetLog] = useState(hasLoggedSets);
+  const rows = normalizeSetLogs(setLogs, activeOption, includeWeight);
+  const summary = getLoggedSetSummary(setLogs, isTimeBased, includeWeight);
+
+  useEffect(() => {
+    setShowSetLog(hasLoggedSets);
+  }, [exercise.id, hasLoggedSets, selectedOption]);
 
   return (
-    <article className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-xs font-black uppercase tracking-wide text-teal-800">{exercise.muscleGroup}</p>
-          <h3 className="mt-1 text-lg font-black text-slate-950">{activeOption.name}</h3>
-          <p className="mt-1 font-semibold text-slate-500">{activeOption.equipment}</p>
-        </div>
-        <button
-          className="rounded-2xl bg-[#EAF7F6] px-3 py-2 text-sm font-black text-teal-900"
-          onClick={() => onOpenVideo({ title: activeOption.name, url: activeDemoLink })}
-          type="button"
-        >
-          Demo
-        </button>
-      </div>
-
-      <div className="mt-4 grid grid-cols-2 gap-2 rounded-2xl bg-slate-50 p-1">
-        <button
-          className={`min-h-10 rounded-xl text-sm font-black ${selectedOption === "main" ? "bg-[#40B5AD] text-slate-950 shadow-sm" : "text-slate-500"}`}
-          onClick={() => onChooseOption("main")}
-          type="button"
-        >
-          Main
-        </button>
-        <button
-          className={`min-h-10 rounded-xl text-sm font-black ${selectedOption === "alternative" ? "bg-[#40B5AD] text-slate-950 shadow-sm" : "text-slate-500"}`}
-          onClick={() => onChooseOption("alternative")}
-          type="button"
-        >
-          Alternative
-        </button>
-      </div>
-
-      <div className="mt-4 grid grid-cols-3 gap-2">
-        <MetricTile label="Sets" value={activeOption.sets} />
-        <MetricTile label={isTimeBased ? "Time" : "Reps"} value={activeOption.repsPerSet} />
-        <MetricTile label="Rest" value={`${activeOption.restSeconds}s`} />
-      </div>
-
-      <p className="mt-3 rounded-2xl bg-[#EAF7F6] p-3 text-sm font-bold text-slate-700">Weight guide: {activeOption.weightGuide}</p>
-      <p className="mt-2 rounded-2xl bg-slate-50 p-3 text-sm font-semibold text-slate-600">Form cue: {activeOption.formCue}</p>
-
-      <div className={effortInputClass}>
-        {!isBodyweightOnly && <input className="rounded-2xl border border-slate-200 px-3 py-2 text-sm font-semibold" placeholder="kg/plate" inputMode="decimal" />}
-        <input className="rounded-2xl border border-slate-200 px-3 py-2 text-sm font-semibold" placeholder="sets" inputMode="numeric" />
-        <input className="rounded-2xl border border-slate-200 px-3 py-2 text-sm font-semibold" placeholder={isTimeBased ? "time" : "reps"} inputMode={isTimeBased ? "text" : "numeric"} />
-      </div>
-
-      <button className="mt-3 flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl bg-teal-50 px-3 text-sm font-black text-teal-900" type="button">
-        <Timer size={16} />
-        Rest timer: {activeOption.restSeconds} sec
-      </button>
-
-      <div className="mt-4 grid grid-cols-3 gap-2">
-        {(["Done", "Partially done", "Not done"] as ExerciseStatus[]).map((status) => (
+    <article className="overflow-hidden rounded-3xl border border-[#334155] bg-[#111827] shadow-lg shadow-black/15">
+      <div className="border-b border-[#334155] bg-[#1E293B] p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-[10px] font-black uppercase tracking-wide text-[#F97316]">{exercise.muscleGroup}</p>
+            <h3 className="mt-1 text-xl font-black leading-tight text-white">{activeOption.name}</h3>
+            <p className="mt-1 text-sm font-semibold text-[#CBD5E1]">{activeOption.equipment}</p>
+          </div>
           <button
-            className={`min-h-11 rounded-2xl px-2 text-[11px] font-black leading-tight ${
-              completionStatus === status ? "bg-[#40B5AD] text-slate-950 shadow-md shadow-teal-100" : "bg-slate-100 text-slate-600"
-            }`}
-            key={status}
-            onClick={() => onUpdateStatus(status)}
+            aria-label={`Open demo for ${activeOption.name}`}
+            className="min-h-10 shrink-0 rounded-2xl bg-[#0066FF] px-4 text-xs font-black text-white"
+            onClick={() => onOpenVideo({ title: activeOption.name, url: activeDemoLink })}
             type="button"
           >
-            {status}
+            Demo
           </button>
-        ))}
+        </div>
+
+        <div className="mt-4 grid grid-cols-2 gap-2 rounded-2xl bg-[#0F172A] p-1">
+          <button
+            className={`min-h-10 rounded-xl text-sm font-black ${selectedOption === "main" ? "bg-[#3B82F6] text-white shadow-sm" : "text-[#CBD5E1]"}`}
+            onClick={() => onChooseOption("main")}
+            type="button"
+          >
+            Main
+          </button>
+          <button
+            className={`min-h-10 rounded-xl text-sm font-black ${selectedOption === "alternative" ? "bg-[#3B82F6] text-white shadow-sm" : "text-[#CBD5E1]"}`}
+            onClick={() => onChooseOption("alternative")}
+            type="button"
+          >
+            Alternative
+          </button>
+        </div>
+      </div>
+
+      <div className="p-4">
+        <div className="grid grid-cols-3 gap-2">
+          <MetricTile label="Sets" value={activeOption.sets} />
+          <MetricTile label={isTimeBased ? "Time" : "Reps"} value={activeOption.repsPerSet} />
+          <MetricTile label="Rest" value={`${activeOption.restSeconds}s`} />
+        </div>
+
+        <div className="mt-3 rounded-2xl border border-[#334155] bg-[#0F172A] p-3">
+          <p className="text-xs font-black uppercase tracking-wide text-[#F97316]">Suggested load</p>
+          <p className="mt-1 text-sm font-bold leading-6 text-[#CBD5E1]">{activeOption.weightGuide}</p>
+        </div>
+
+        <ItemTimerControl timer={timer} onToggle={onToggleTimer} />
+
+        <div className="mt-4 rounded-2xl border border-[#334155] bg-[#1E293B] p-3">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-sm font-black text-white">Track progress</p>
+              <p className="mt-1 text-xs font-bold text-[#CBD5E1]">{hasLoggedSets ? summary : "Optional for weight/reps graphs."}</p>
+            </div>
+            <button
+              className="shrink-0 rounded-xl bg-[#273449] px-3 py-2 text-xs font-black text-[#F97316]"
+              onClick={() => setShowSetLog((current) => !current)}
+              type="button"
+            >
+              {showSetLog ? "Hide" : hasLoggedSets ? "Edit" : "Track"}
+            </button>
+          </div>
+
+          {showSetLog && (
+            <div className="mt-3 grid gap-2">
+              {rows.map((row, index) => (
+                <div className={`grid gap-2 ${includeWeight ? "grid-cols-[3.25rem_1fr_1fr]" : "grid-cols-[3.25rem_1fr]"}`} key={`${exercise.id}-set-${index}`}>
+                  <div className="grid min-h-11 place-items-center rounded-xl bg-[#0F172A] text-xs font-black text-[#CBD5E1]">S{index + 1}</div>
+                  {includeWeight && (
+                    <input
+                      className="min-w-0 rounded-xl border border-[#334155] bg-[#0F172A] px-3 text-sm font-black text-white outline-none placeholder:text-[#64748B]"
+                      inputMode="decimal"
+                      placeholder="kg"
+                      value={row.weight === "Bodyweight" ? "" : row.weight}
+                      onChange={(event) => onUpdateSetLog(index, "weight", event.target.value)}
+                    />
+                  )}
+                  <input
+                    className="min-w-0 rounded-xl border border-[#334155] bg-[#0F172A] px-3 text-sm font-black text-white outline-none placeholder:text-[#64748B]"
+                    inputMode={isTimeBased ? "text" : "numeric"}
+                    placeholder={isTimeBased ? "time" : "reps"}
+                    value={isTimeBased ? row.duration : row.reps}
+                    onChange={(event) => onUpdateSetLog(index, isTimeBased ? "duration" : "reps", event.target.value)}
+                  />
+                </div>
+              ))}
+              <button
+                className="min-h-11 rounded-xl border border-[#424656] bg-[#0F172A] px-3 text-sm font-black text-[#B3C5FF]"
+                onClick={() => onUpdateSetLog(rows.length, isTimeBased ? "duration" : "reps", "")}
+                type="button"
+              >
+                + Add set
+              </button>
+            </div>
+          )}
+        </div>
+
+        <p className="mt-3 rounded-2xl bg-[#0F172A] p-3 text-sm font-semibold leading-6 text-[#CBD5E1]">Cue: {activeOption.formCue}</p>
+
+        <StatusButtonGroup
+          allowedStatuses={["Done", "Partially done", "Not done"]}
+          className="mt-4"
+          value={completionStatus}
+          onChange={onUpdateStatus}
+        />
       </div>
     </article>
+  );
+}
+
+function StatusButtonGroup({
+  allowedStatuses,
+  className = "",
+  value,
+  onChange,
+}: {
+  allowedStatuses: ExerciseStatus[];
+  className?: string;
+  value: ExerciseStatus;
+  onChange: (status: ExerciseStatus) => void;
+}) {
+  return (
+    <div className={`${className} grid ${allowedStatuses.length === 2 ? "grid-cols-2" : "grid-cols-3"} gap-2`}>
+      {allowedStatuses.map((status) => {
+        const isSelected = value === status;
+        const Icon = status === "Done" ? CheckCheck : status === "Partially done" ? Check : X;
+        const selectedClass =
+          status === "Done"
+            ? "border-[#22C55E] bg-[#22C55E] text-[#052E16]"
+            : status === "Partially done"
+              ? "border-[#3B82F6] bg-[#3B82F6] text-white"
+              : "border-[#EF4444] bg-[#EF4444] text-white";
+        const idleClass =
+          status === "Done"
+            ? "border-[#22C55E]/40 bg-[#12251B] text-[#86EFAC]"
+            : status === "Partially done"
+              ? "border-[#3B82F6]/40 bg-[#10213F] text-[#93C5FD]"
+              : "border-[#EF4444]/40 bg-[#2A1217] text-[#FCA5A5]";
+
+        return (
+          <button
+            className={`flex min-h-11 items-center justify-center gap-1.5 rounded-2xl border px-2 text-[11px] font-black leading-tight transition active:scale-[0.98] ${
+              isSelected ? selectedClass : idleClass
+            }`}
+            key={status}
+            onClick={() => onChange(status)}
+            type="button"
+          >
+            <Icon size={15} strokeWidth={3} />
+            <span>{status === "Partially done" ? "Partial" : status}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function ItemTimerControl({ timer, onToggle }: { timer: WorkoutSectionLog; onToggle: () => void }) {
+  const isRunning = Boolean(timer.runningSince);
+  const elapsedSeconds = getSectionElapsedSeconds(timer);
+
+  return (
+    <div className="mt-3 grid grid-cols-2 gap-2">
+      <div className="grid min-h-14 grid-cols-[1fr_auto] items-center gap-2 rounded-2xl border border-[#334155] bg-[#0F172A] p-2">
+        <div className="min-w-0 px-2">
+          <p className="text-[10px] font-black uppercase tracking-wide text-[#94A3B8]">Timer</p>
+          <p className="truncate text-sm font-black text-white">{formatDuration(elapsedSeconds)}</p>
+        </div>
+        <button
+          aria-label={isRunning ? "Pause timer" : "Start timer"}
+          className={`grid h-10 w-10 place-items-center rounded-xl ${isRunning ? "bg-[#ABD600] text-[#283500]" : "bg-[#0066FF] text-white"}`}
+          onClick={onToggle}
+          type="button"
+        >
+          {isRunning ? <Pause size={18} /> : <Play size={18} />}
+        </button>
+      </div>
+      <div className="grid min-h-14 place-content-center rounded-2xl border border-[#334155] bg-[#1E293B] px-3 text-center">
+        <p className="text-[10px] font-black uppercase tracking-wide text-[#94A3B8]">Time logged</p>
+        <p className="text-sm font-black text-[#ABD600]">{formatDuration(elapsedSeconds)}</p>
+      </div>
+    </div>
   );
 }
 
@@ -2929,31 +4206,33 @@ function ProgressBar({ percent }: { percent: number }) {
 function ProgressScreen({
   plan,
   completion,
+  exerciseSelection,
   monthlyProgress,
-  reminderSettings,
-  notificationPermission,
-  onEnableReminders,
-  onDisableReminders,
-  onReminderTimeChange,
+  workoutLogs,
+  onOpenDay,
 }: {
   plan: WeeklyPlan | null;
   completion: ExerciseCompletion;
+  exerciseSelection: ExerciseSelection;
   monthlyProgress: MonthlyProgress;
-  reminderSettings: ReminderSettings;
-  notificationPermission: ReminderPermission;
-  onEnableReminders: () => void;
-  onDisableReminders: () => void;
-  onReminderTimeChange: (time: Pick<ReminderSettings, "hour" | "minute" | "period">) => void;
+  workoutLogs: WorkoutLogs;
+  onOpenDay: (dayIndex: number) => void;
 }) {
   const weekly = getWeeklyProgress(plan, completion);
   const [view, setView] = useState<"weekly" | "daily">("weekly");
+  const [selectedProgressDayIndex, setSelectedProgressDayIndex] = useState<number | null>(null);
+  const progressNudge = getProgressNudge(plan, completion);
+  const partiallyStartedDay = getPartiallyStartedDay(plan, completion);
+  const actionTargetDay = getProgressActionTargetDay(plan, completion);
+  const actionTargetIndex = actionTargetDay && plan ? plan.days.findIndex((day) => day.day === actionTargetDay.day) : -1;
+  const performanceRows = getExercisePerformanceRows(plan, workoutLogs, exerciseSelection);
 
   return (
     <section className="flex flex-1 flex-col gap-4 p-4 pb-20 pt-3 sm:gap-5 sm:p-5 sm:pt-4 sm:pb-24">
       <ScreenTitle
         icon={<BarChart3 size={22} />}
         title={view === "weekly" ? "Progress" : "Daily Progress"}
-        subtitle={view === "weekly" ? "This week first, month view below." : "Your day-by-day workout completion."}
+        subtitle={view === "weekly" ? "" : "Daily workout completion"}
       />
 
       {view === "weekly" ? (
@@ -2972,21 +4251,39 @@ function ProgressScreen({
             <p className="mt-4 text-sm font-black text-[#CBD5E1]">Tap to view daily progress</p>
           </button>
 
+          <ProgressNudgeCard
+            actionLabel={actionTargetDay ? `${partiallyStartedDay ? "Continue" : "Start"} ${actionTargetDay.day}` : "View daily progress"}
+            message={progressNudge}
+            onAction={() => {
+              if (actionTargetIndex >= 0) {
+                onOpenDay(actionTargetIndex);
+                return;
+              }
+              setView("daily");
+            }}
+          />
+
           <div className="grid grid-cols-3 gap-3">
             <MetricTile label="Workout days" value={String(weekly.workoutDays)} />
             <MetricTile label="Partial" value={String(weekly.partialExercises)} />
             <MetricTile label="Done" value={String(weekly.doneExercises)} />
           </div>
 
-          <WorkoutReminderCard
-            completion={completion}
-            notificationPermission={notificationPermission}
-            plan={plan}
-            reminderSettings={reminderSettings}
-            onDisable={onDisableReminders}
-            onEnable={onEnableReminders}
-            onTimeChange={onReminderTimeChange}
-          />
+          <ExercisePerformancePanel rows={performanceRows} />
+
+          <button
+            className="rounded-3xl border border-[#334155] bg-[#273449] p-4 text-left transition active:scale-[0.99]"
+            onClick={() => setView("daily")}
+            type="button"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-black uppercase tracking-wide text-[#F97316]">Daily breakdown</p>
+                <h3 className="mt-1 text-xl font-black text-white">See each day&apos;s progress</h3>
+              </div>
+              <ChevronRight className="shrink-0 text-[#F97316]" size={24} />
+            </div>
+          </button>
 
           <MonthlyProgressCalendar completion={completion} history={monthlyProgress} plan={plan} />
         </>
@@ -2995,17 +4292,28 @@ function ProgressScreen({
           <button className="w-fit rounded-full bg-[#273449] px-4 py-2 text-sm font-black text-[#F97316]" onClick={() => setView("weekly")} type="button">
             Back to week
           </button>
-          {plan?.days.map((day) => {
+          {plan?.days.map((day, dayIndex) => {
             const progress = getDayProgress(day, completion);
+            const log = getWorkoutLog(workoutLogs, day);
+            const summary = getWorkoutActivitySummary(day, log, completion);
+            const isSelected = selectedProgressDayIndex === dayIndex;
+            const dayPerformanceRows = getDayExercisePerformanceRows(day, log, exerciseSelection);
             return (
               <article className="rounded-3xl border border-[#334155] bg-[#1E293B] p-4" key={day.day}>
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-black text-[#F97316]">{day.day}</p>
-                    <h3 className="mt-1 font-black text-white">{day.title}</h3>
-                  </div>
-                  {progress.isComplete && <CheckCircle2 className="text-emerald-500" size={24} />}
-                </div>
+                <button
+                  className="flex w-full items-start justify-between gap-3 text-left"
+                  onClick={() => setSelectedProgressDayIndex((current) => (current === dayIndex ? null : dayIndex))}
+                  type="button"
+                >
+                  <span>
+                    <span className="text-sm font-black text-[#F97316]">{day.day}</span>
+                    <span className="mt-1 block font-black text-white">{day.title}</span>
+                  </span>
+                  <span className="flex items-center gap-2">
+                    {progress.isComplete && <CheckCircle2 className="text-emerald-500" size={24} />}
+                    {!day.isRestDay && <ChevronRight className={`text-[#B3C5FF] transition ${isSelected ? "rotate-90" : ""}`} size={22} />}
+                  </span>
+                </button>
                 {day.isRestDay ? (
                   <p className="mt-3 text-sm font-bold text-[#CBD5E1]">Recovery day</p>
                 ) : (
@@ -3014,6 +4322,16 @@ function ProgressScreen({
                       {progress.done} done, {progress.partial} partial, {progress.total - progress.done - progress.partial} left
                     </p>
                     <ProgressBar percent={progress.percent} />
+                    <div className="mt-3 grid grid-cols-2 gap-2">
+                      <MetricTile label="Before weight" value={log.beforeWeight ? `${log.beforeWeight} kg` : "-"} />
+                      <MetricTile label="After weight" value={log.afterWeight ? `${log.afterWeight} kg` : "-"} />
+                      <MetricTile label="Active time" value={formatDuration(summary.activeSeconds)} />
+                      <MetricTile label="Rest time" value={formatDuration(summary.restSeconds)} />
+                    </div>
+                    <p className="mt-3 text-xs font-black uppercase tracking-wide text-[#94A3B8]">
+                      {isSelected ? "Exercise records" : "Tap day to view exercise records"}
+                    </p>
+                    {isSelected && <DayExerciseRecords rows={dayPerformanceRows} />}
                   </>
                 )}
               </article>
@@ -3025,115 +4343,131 @@ function ProgressScreen({
   );
 }
 
-function WorkoutReminderCard({
-  plan,
-  completion,
-  reminderSettings,
-  notificationPermission,
-  onEnable,
-  onDisable,
-  onTimeChange,
-}: {
-  plan: WeeklyPlan | null;
-  completion: ExerciseCompletion;
-  reminderSettings: ReminderSettings;
-  notificationPermission: ReminderPermission;
-  onEnable: () => void;
-  onDisable: () => void;
-  onTimeChange: (time: Pick<ReminderSettings, "hour" | "minute" | "period">) => void;
-}) {
-  const nudge = getProgressNudge(plan, completion);
-  const remainingDays = getRemainingWorkoutDays(plan, completion);
-  const isUnsupported = notificationPermission === "unsupported";
-  const isDenied = notificationPermission === "denied";
-  const isEnabled = reminderSettings.enabled && notificationPermission === "granted";
-  const hasValidTime = Boolean(getReminderTimeParts(reminderSettings));
+function ExercisePerformancePanel({ rows }: { rows: ExercisePerformanceRow[] }) {
+  const topRows = rows.slice(0, 6);
+  const maxVolume = Math.max(1, ...topRows.map((row) => row.volume || row.totalReps || row.sets.length));
 
   return (
-    <section className="rounded-3xl border border-[#334155] bg-[#1E293B] p-4">
-      <div className="flex items-start gap-3">
-        <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-[#F97316] text-white">
-          <Timer size={22} />
+    <section className="rounded-3xl border border-[#334155] bg-[#111827] p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-black uppercase tracking-wide text-[#F97316]">Exercise performance</p>
+          <h3 className="mt-1 text-xl font-black text-white">Weights and reps logged</h3>
         </div>
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-black uppercase tracking-wide text-[#F97316]">Smart reminder</p>
-          <h3 className="mt-1 text-xl font-black text-white">{isEnabled ? `On at ${getReminderTimeLabel(reminderSettings)}` : "Turn on workout nudges"}</h3>
-          <p className="mt-2 text-sm font-semibold leading-6 text-[#CBD5E1]">{nudge}</p>
+        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-[#273449] text-[#22C55E]">
+          <BarChart3 size={18} />
+        </span>
+      </div>
+
+      {topRows.length ? (
+        <div className="mt-4 grid gap-3">
+          {topRows.map((row) => {
+            const score = row.volume || row.totalReps || row.sets.length;
+            const percent = Math.min(100, Math.max(8, Math.round((score / maxVolume) * 100)));
+            return (
+              <article className="rounded-2xl border border-[#334155] bg-[#1E293B] p-3" key={`${row.day}-${row.exerciseId}`}>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-[10px] font-black uppercase tracking-wide text-[#94A3B8]">{row.day} | {row.muscleGroup}</p>
+                    <h4 className="mt-1 truncate text-sm font-black text-white">{row.exerciseName}</h4>
+                  </div>
+                  <p className="shrink-0 text-right text-xs font-black text-[#F97316]">
+                    {row.bestWeight > 0 ? `${row.bestWeight} kg` : `${row.totalReps} reps`}
+                  </p>
+                </div>
+                <div className="mt-3 h-2 overflow-hidden rounded-full bg-[#334155]">
+                  <div className="h-full rounded-full bg-[#22C55E]" style={{ width: `${percent}%` }} />
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {row.sets.map((set, index) => (
+                    <span className="rounded-full bg-[#0F172A] px-3 py-1 text-[11px] font-black text-[#CBD5E1]" key={`${row.exerciseId}-mini-${index}`}>
+                      S{index + 1}: {set.weight ? `${set.weight}kg ` : ""}{set.reps ? `${set.reps} reps` : set.duration || "logged"}
+                    </span>
+                  ))}
+                </div>
+              </article>
+            );
+          })}
         </div>
-      </div>
-
-      <div className="mt-4 rounded-2xl bg-[#0F172A] p-3 text-sm font-bold leading-6 text-[#CBD5E1]">
-        {remainingDays === 0 ? "No reminder needed right now. Your workout days are complete for this week." : `${remainingDays} workout day${remainingDays === 1 ? "" : "s"} still open this week.`}
-      </div>
-
-      <div className="mt-4 grid grid-cols-[72px_72px_76px] justify-between gap-2">
-        <label className="grid gap-1">
-          <span className="text-[11px] font-black text-[#CBD5E1]">Hour</span>
-          <input
-            className="h-10 rounded-xl border border-[#334155] bg-[#273449] px-2 text-center text-base font-black text-white outline-none focus:border-[#3B82F6]"
-            inputMode="numeric"
-            maxLength={2}
-            placeholder="HH"
-            value={reminderSettings.hour}
-            onChange={(event) => onTimeChange({ ...reminderSettings, hour: event.target.value.replace(/\D/g, "").slice(0, 2) })}
-          />
-        </label>
-        <label className="grid gap-1">
-          <span className="text-[11px] font-black text-[#CBD5E1]">Minute</span>
-          <input
-            className="h-10 rounded-xl border border-[#334155] bg-[#273449] px-2 text-center text-base font-black text-white outline-none focus:border-[#3B82F6]"
-            inputMode="numeric"
-            maxLength={2}
-            placeholder="MM"
-            value={reminderSettings.minute}
-            onChange={(event) => onTimeChange({ ...reminderSettings, minute: event.target.value.replace(/\D/g, "").slice(0, 2) })}
-          />
-        </label>
-        <label className="grid gap-1">
-          <span className="text-[11px] font-black text-[#CBD5E1]">AM/PM</span>
-          <select
-            className="h-10 rounded-xl border border-[#334155] bg-[#273449] px-2 text-sm font-black text-white outline-none focus:border-[#3B82F6]"
-            value={reminderSettings.period}
-            onChange={(event) => onTimeChange({ ...reminderSettings, period: event.target.value as ReminderSettings["period"] })}
-          >
-            <option>AM</option>
-            <option>PM</option>
-          </select>
-        </label>
-      </div>
-
-      {!hasValidTime && (
-        <p className="mt-3 rounded-2xl bg-[#0F172A] p-3 text-xs font-bold leading-5 text-[#CBD5E1]">
-          Enter a valid time, for example 7, 30, PM.
-        </p>
+      ) : (
+        <div className="mt-4 rounded-2xl bg-[#1E293B] p-4">
+          <p className="text-sm font-bold leading-6 text-[#CBD5E1]">Log reps and weights during a workout. Your exercise progress will appear here.</p>
+        </div>
       )}
+    </section>
+  );
+}
 
-      {isUnsupported && (
-        <p className="mt-4 rounded-2xl bg-[#0F172A] p-3 text-xs font-bold leading-5 text-[#CBD5E1]">
-          Browser notifications are not available here. In-app nudges will still show in Progress.
-        </p>
-      )}
+function DayExerciseRecords({ rows }: { rows: ExercisePerformanceRow[] }) {
+  if (!rows.length) {
+    return (
+      <div className="mt-3 rounded-2xl border border-[#334155] bg-[#0F172A] p-4">
+        <p className="text-sm font-bold leading-6 text-[#CBD5E1]">No set logs yet. Tap Track during workouts</p>
+      </div>
+    );
+  }
 
-      {isDenied && (
-        <p className="mt-4 rounded-2xl bg-red-500/15 p-3 text-xs font-bold leading-5 text-red-200">
-          Notifications are blocked in this browser. Enable site notifications in browser settings to use reminders.
-        </p>
-      )}
+  return (
+    <div className="mt-3 grid gap-3">
+      {rows.map((row) => {
+        const maxScore = Math.max(1, ...row.sets.map((set) => (Number(set.weight) || 1) * (Number(set.reps) || 1)));
+        return (
+          <article className="rounded-2xl border border-[#334155] bg-[#0F172A] p-3" key={`${row.day}-${row.exerciseId}-detail`}>
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-[10px] font-black uppercase tracking-wide text-[#94A3B8]">{row.muscleGroup}</p>
+                <h4 className="mt-1 truncate text-sm font-black text-white">{row.exerciseName}</h4>
+              </div>
+              <p className="shrink-0 text-xs font-black text-[#ABD600]">
+                {row.bestWeight > 0 ? `${row.bestWeight} kg best` : `${row.totalReps} reps`}
+              </p>
+            </div>
+            <div className="mt-3 grid gap-2">
+              {row.sets.map((set, index) => {
+                const score = (Number(set.weight) || 1) * (Number(set.reps) || 1);
+                const percent = Math.min(100, Math.max(10, Math.round((score / maxScore) * 100)));
+                const label = set.duration || `${set.weight ? `${set.weight}kg x ` : ""}${set.reps || 0} reps`;
+                return (
+                  <div className="grid grid-cols-[2.5rem_1fr] items-center gap-2" key={`${row.exerciseId}-set-line-${index}`}>
+                    <p className="text-xs font-black text-[#CBD5E1]">S{index + 1}</p>
+                    <div>
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs font-black text-white">{label}</p>
+                        <p className="text-[10px] font-black text-[#94A3B8]">{set.duration ? "time" : "load"}</p>
+                      </div>
+                      <div className="mt-1 h-2 overflow-hidden rounded-full bg-[#333535]">
+                        <div className="h-full rounded-full bg-[#ABD600]" style={{ width: `${percent}%` }} />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </article>
+        );
+      })}
+    </div>
+  );
+}
 
+function getProgressActionTargetDay(plan: WeeklyPlan | null, completion: ExerciseCompletion) {
+  if (!plan) return null;
+  return getPartiallyStartedDay(plan, completion) ?? getReminderTargetDay(plan, completion);
+}
+
+function ProgressNudgeCard({ actionLabel, message, onAction }: { actionLabel: string; message: string; onAction: () => void }) {
+  return (
+    <section className="rounded-3xl border border-[#334155] bg-[#0F172A] p-4">
+      <p className="text-xs font-black uppercase tracking-wide text-[#ABD600]">Next</p>
+      <p className="mt-2 text-xl font-black leading-tight text-white">{message}</p>
       <button
-        className={`mt-4 flex min-h-12 w-full items-center justify-center rounded-2xl px-4 text-sm font-black ${
-          isEnabled ? "border border-[#334155] bg-[#273449] text-[#CBD5E1]" : "bg-[#22C55E] text-white"
-        }`}
-        disabled={isUnsupported || isDenied || remainingDays === 0 || !hasValidTime}
-        onClick={isEnabled ? onDisable : onEnable}
+        className="mt-4 flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl bg-[#0066FF] px-4 text-sm font-black text-white shadow-lg shadow-blue-950/25 transition active:scale-[0.98]"
+        onClick={onAction}
         type="button"
       >
-        {isEnabled ? "Turn Off Reminder" : "Turn On Reminder"}
+        {actionLabel}
+        <ChevronRight size={18} />
       </button>
-
-      <p className="mt-3 rounded-2xl bg-[#0F172A] p-3 text-xs font-bold leading-5 text-[#CBD5E1]">
-        Keep notifications allowed so GymBuddy can remind you at your chosen time.
-      </p>
     </section>
   );
 }
@@ -3185,9 +4519,10 @@ function MonthlyProgressCalendar({ plan, completion, history }: { plan: WeeklyPl
 
       <div className="mt-4 grid grid-cols-2 gap-2 text-xs font-bold text-[#CBD5E1]">
         <CalendarLegendDot className="bg-[#22C55E]" label="Done" />
-        <CalendarLegendDot className="bg-[#F97316]" label="Partial" />
-        <CalendarLegendDot className="bg-[#334155]" label="Rest" />
-        <CalendarLegendDot className="border border-[#334155] bg-[#273449]" label="Upcoming" />
+        <CalendarLegendDot className="bg-[#3B82F6]" label="Partial" />
+        <CalendarLegendDot className="bg-[#F59E0B]" label="Check-in" />
+        <CalendarLegendDot className="bg-[#8B5CF6]" label="Rest" />
+        <CalendarLegendDot className="border border-dashed border-[#64748B] bg-transparent" label="Upcoming" />
       </div>
     </section>
   );
@@ -3197,27 +4532,27 @@ function CalendarDayCell({ day }: { day?: CalendarDayProgress }) {
   const baseClass = "flex min-h-11 items-center justify-center rounded-2xl border text-xs font-black transition";
 
   if (!day) {
-    return <div className={`${baseClass} border-[#334155] bg-[#273449]/60 text-[#64748B]`}>-</div>;
+    return <div className={`${baseClass} border-dashed border-[#64748B] bg-transparent text-[#64748B]`}>-</div>;
   }
 
   const statusClass: Record<CalendarDayStatus, string> = {
-    done: "border-[#22C55E] bg-[#22C55E] text-[#052E16]",
-    partial: "border-[#F97316] bg-[#F97316] text-white",
-    missed: "border-[#EF4444] bg-[#EF4444] text-white",
-    rest: "border-[#334155] bg-[#334155] text-[#CBD5E1]",
-    pending: "border-[#334155] bg-[#273449] text-[#CBD5E1]",
+    done: "border-[#22C55E] bg-[#22C55E] text-[#052E16] shadow-[0_0_0_2px_rgba(34,197,94,0.16)]",
+    partial: "border-[#3B82F6] bg-[#3B82F6] text-white",
+    missed: "border-[#F59E0B] bg-[#F59E0B] text-[#111827]",
+    rest: "border-[#8B5CF6] bg-[#8B5CF6]/20 text-[#C4B5FD]",
+    pending: "border-dashed border-[#64748B] bg-transparent text-[#94A3B8]",
   };
 
   const label: Record<CalendarDayStatus, string> = {
-    done: "✓",
+    done: "OK",
     partial: `${day.percent}%`,
     missed: "!",
     rest: "R",
-    pending: "•",
+    pending: "-",
   };
 
   return (
-    <div aria-label={`Day ${day.dayNumber}: ${day.title}, ${day.status}`} className={`${baseClass} ${statusClass[day.status]}`} title={`${day.title} - ${day.percent}%`}>
+    <div aria-label={`Day ${day.dayNumber}: ${day.title}, ${day.status === "missed" ? "needs check-in" : day.status}`} className={`${baseClass} ${statusClass[day.status]}`} title={`${day.title} - ${day.status === "missed" ? "needs check-in" : `${day.percent}%`}`}>
       {label[day.status]}
     </div>
   );
@@ -3236,170 +4571,110 @@ function NutritionScreen({
   profile,
   nutritionPlan,
   isLoading,
-  weightLog,
-  onBodyGoalChange,
   onDietPreferenceChange,
-  onLogWeight,
-  onRefresh,
 }: {
   profile: UserProfile;
   nutritionPlan: NutritionPlan | null;
   isLoading: boolean;
-  weightLog: WeightLogEntry[];
-  onBodyGoalChange: (bodyGoal: BodyGoal) => void;
   onDietPreferenceChange: (dietPreference: UserProfile["dietPreference"]) => void;
-  onLogWeight: (weightKg: string) => boolean;
-  onRefresh: () => void;
 }) {
-  const [weightInput, setWeightInput] = useState(profile.weight);
-  const [weightMessage, setWeightMessage] = useState("");
   const plan = nutritionPlan ?? createFallbackNutritionPlan(profile);
-  const calorieDelta = plan.maintenanceCalories && plan.targetCalories ? plan.targetCalories - plan.maintenanceCalories : 0;
-  const deltaLabel = calorieDelta === 0 ? "Maintain" : calorieDelta > 0 ? `+${calorieDelta} kcal` : `${calorieDelta} kcal`;
-  const bodyGoalOptions: BodyGoal[] = ["Lose weight slowly", "Maintain weight", "Gain muscle slowly"];
   const dietOptions: UserProfile["dietPreference"][] = ["Vegetarian", "Non-vegetarian", "Eggetarian", "Vegan"];
-  const latestLog = weightLog[0];
-  const recommendedBodyGoal = getRecommendedBodyGoal(profile);
+  const targetCalories = plan.targetCalories ?? 0;
+  const protein = plan.macros?.protein ?? 0;
+  const carbs = plan.macros?.carbs ?? 0;
+  const fats = plan.macros?.fats ?? 0;
+  const waterGoal = plan.macros?.waterLiters ?? getDailyWaterToDrinkLiters(profile);
+  const todayKey = getLocalDateKey();
+  const [waterLog, setWaterLog] = useState<Record<string, number>>(() => readStorage<Record<string, number>>(STORAGE_KEYS.waterIntake, {}));
+  const [selectedMealStyle, setSelectedMealStyle] = useState<MealStyle>("North Indian");
+  const [mealRefreshIndex, setMealRefreshIndex] = useState(0);
+  const waterIntake = Number(waterLog[todayKey] ?? 0);
+  const mealStyles: MealStyle[] = ["North Indian", "South Indian", "Quick Budget"];
+  const visibleMeals = getMealChoices(profile.dietPreference, selectedMealStyle);
+  const mealLibrary = getMealSpotlightLibrary(profile.dietPreference, selectedMealStyle, plan);
+  const meal = mealLibrary[mealRefreshIndex % mealLibrary.length];
+  const proteinPercent = getMacroCalorieShare(protein, 4, targetCalories);
+  const carbsPercent = getMacroCalorieShare(carbs, 4, targetCalories);
+  const fatsPercent = getMacroCalorieShare(fats, 9, targetCalories);
 
-  useEffect(() => {
-    setWeightInput(profile.weight);
-  }, [profile.weight]);
-
-  function submitWeightLog(event: FormEvent) {
-    event.preventDefault();
-    const saved = onLogWeight(weightInput);
-    setWeightMessage(saved ? "Weight saved. Calories updated from your latest check-in." : "Enter a realistic weight in kg.");
+  function logWater(ml: number) {
+    const nextAmount = Number(Math.min(waterGoal, waterIntake + ml / 1000).toFixed(2));
+    const nextLog = { ...waterLog, [todayKey]: nextAmount };
+    setWaterLog(nextLog);
+    writeStorage(STORAGE_KEYS.waterIntake, nextLog);
   }
 
   return (
-    <section className="flex flex-1 flex-col gap-4 p-4 pb-20 pt-3 sm:gap-5 sm:p-5 sm:pt-4 sm:pb-24">
-      <ScreenTitle icon={<Apple size={22} />} title="Nutrition" subtitle="Simple food guidance to support your workouts." />
-
-      <section className="rounded-3xl border border-[#334155] bg-[#1E293B] p-4">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <p className="text-sm font-black uppercase tracking-wide text-[#F97316]">This week&apos;s body goal</p>
-            <p className="mt-1 text-sm font-semibold leading-6 text-[#CBD5E1]">We&apos;ll adjust your calorie target gently.</p>
-          </div>
-          <button
-            className="rounded-2xl border border-[#334155] bg-[#0F172A] px-3 py-2 text-xs font-black text-white disabled:opacity-60"
-            disabled={isLoading}
-            onClick={onRefresh}
-            type="button"
-          >
-            Refresh
-          </button>
+    <section className="flex flex-1 flex-col gap-6 bg-[#0F172A] p-4 pb-24 pt-4 sm:gap-7 sm:p-5 sm:pb-28 sm:pt-5">
+      <div className="flex items-end justify-between gap-4">
+        <div>
+          <p className="text-sm font-black uppercase tracking-wide text-[#CBD5E1]">Daily targets</p>
+          <h1 className="mt-1 text-3xl font-black leading-tight text-white">Nutrition Guide</h1>
         </div>
-        <div className="mt-4 grid gap-2">
-          {bodyGoalOptions.map((option) => {
-            const isSelected = profile.bodyGoal === option;
-            const isRecommended = recommendedBodyGoal === option;
-            return (
-              <button
-                className={`flex min-h-12 items-center justify-between gap-2 rounded-2xl border px-3 text-left text-sm font-black transition ${
-                  isSelected
-                    ? "border-[#3B82F6] bg-[#3B82F6] text-white shadow-lg shadow-blue-950/30"
-                    : "border-[#334155] bg-[#273449] text-[#CBD5E1]"
-                }`}
-                key={option}
-                onClick={() => onBodyGoalChange(option)}
-                type="button"
-              >
-                <span>{option}</span>
-                {isRecommended && (
-                  <span className={`rounded-full px-2 py-1 text-[10px] font-black ${isSelected ? "bg-white/20 text-white" : "bg-[#0F172A] text-[#F97316]"}`}>
-                    Recommended
-                  </span>
-                )}
-              </button>
-            );
-          })}
+        <div className="text-right">
+          <p className="text-3xl font-black leading-none text-[#B3C5FF]">{targetCalories ? targetCalories.toLocaleString("en-IN") : "--"}</p>
+          <p className="mt-1 text-sm font-black text-[#CBD5E1]">kcal target</p>
         </div>
-        {isLoading && <p className="mt-3 rounded-2xl bg-[#0F172A] p-3 text-sm font-bold text-[#CBD5E1]">Updating food choices for this week...</p>}
-      </section>
-
-      <section className="rounded-3xl border border-[#334155] bg-[#1E293B] p-4">
-        <p className="text-sm font-black uppercase tracking-wide text-[#F97316]">Weekly weight check-in</p>
-        <p className="mt-1 text-sm font-semibold leading-6 text-[#CBD5E1]">Log once a week. Your calories adjust from the latest weight.</p>
-        <form className="mt-4 grid grid-cols-[1fr_auto] gap-2" onSubmit={submitWeightLog}>
-          <label className="relative">
-            <span className="sr-only">Current weight in kg</span>
-            <input
-              className="min-h-12 w-full rounded-2xl border border-[#334155] bg-[#0F172A] px-4 pr-10 text-base font-black text-white outline-none focus:border-[#3B82F6] focus:ring-4 focus:ring-blue-500/15"
-              inputMode="decimal"
-              min="20"
-              max="250"
-              placeholder="Weight"
-              step="0.1"
-              type="number"
-              value={weightInput}
-              onChange={(event) => {
-                setWeightInput(event.target.value);
-                setWeightMessage("");
-              }}
-            />
-            <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-sm font-black text-[#CBD5E1]">kg</span>
-          </label>
-          <button className="min-h-12 rounded-2xl bg-[#3B82F6] px-5 text-sm font-black text-white disabled:opacity-60" disabled={isLoading} type="submit">
-            Save
-          </button>
-        </form>
-        {weightMessage && <p className="mt-3 rounded-2xl bg-[#0F172A] p-3 text-sm font-bold text-[#CBD5E1]">{weightMessage}</p>}
-        {latestLog && (
-          <div className="mt-4 rounded-2xl bg-[#273449] p-3">
-            <p className="text-xs font-black uppercase tracking-wide text-[#CBD5E1]">Latest check-in</p>
-            <p className="mt-1 text-sm font-black text-white">
-              {latestLog.weight} kg on {latestLog.date}
-            </p>
-            <p className="mt-1 text-xs font-bold leading-5 text-[#CBD5E1]">
-              BMI {latestLog.bmi ?? "-"} | Target {latestLog.targetCalories ? `${latestLog.targetCalories} kcal` : "-"}
-            </p>
-          </div>
-        )}
-        {weightLog.length > 1 && (
-          <div className="mt-3 rounded-2xl border border-[#334155] bg-[#0F172A] p-3">
-            <p className="text-[11px] font-black uppercase tracking-wide text-[#64748B]">Recent records</p>
-            {weightLog.slice(1, 4).map((entry) => (
-              <div className="mt-2 flex items-center justify-between text-[11px] font-bold text-[#94A3B8]" key={entry.id}>
-                <span>{entry.date}</span>
-                <span>{entry.weight} kg</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-
-      <div className="rounded-3xl border border-[#334155] bg-[#273449] p-4 sm:p-5">
-        <p className="text-sm font-black uppercase tracking-wide text-[#F97316]">Daily calorie estimate</p>
-        {plan.maintenanceCalories && plan.targetCalories ? (
-          <>
-            <div className="mt-4 grid grid-cols-2 gap-3">
-              <MetricTile label="Maintenance" value={`${plan.maintenanceCalories} kcal`} />
-              <MetricTile label="Target" value={`${plan.targetCalories} kcal`} />
-            </div>
-            <p className="mt-3 rounded-2xl bg-[#0F172A] p-3 text-sm font-bold leading-6 text-[#CBD5E1]">
-              Goal adjustment: {deltaLabel}. This is an estimate, not a medical diet plan.
-            </p>
-          </>
-        ) : (
-          <p className="mt-3 rounded-2xl bg-[#0F172A] p-3 text-sm font-bold leading-6 text-[#CBD5E1]">
-            Add age, height, and weight in Profile/Onboarding to estimate calories.
-          </p>
-        )}
       </div>
 
       <section className="rounded-3xl border border-[#334155] bg-[#1E293B] p-4">
-        <p className="text-sm font-black uppercase tracking-wide text-[#F97316]">Diet preference</p>
-        <p className="mt-1 text-sm font-semibold text-[#CBD5E1]">Meals change around this choice.</p>
-        <div className="mt-4 grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-3 gap-3">
+          <MacroRing label="Protein" percent={proteinPercent} value={`${protein || "-"}g`} tone="blue" />
+          <MacroRing label="Carbs" percent={carbsPercent} value={`${carbs || "-"}g`} tone="lime" />
+          <MacroRing label="Fats" percent={fatsPercent} value={`${fats || "-"}g`} tone="silver" />
+        </div>
+      </section>
+
+      <section className="rounded-3xl border border-[#334155] bg-[#1E293B] p-4">
+        <div className="flex items-center gap-3">
+          <div className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl bg-[#0066FF]/20 text-[#B3C5FF]">
+            <Droplet size={26} />
+          </div>
+          <div className="min-w-0 flex-1">
+            <h2 className="text-lg font-black text-white">Water Intake</h2>
+            <p className="mt-1 text-xl font-black text-[#CBD5E1]">{waterIntake.toFixed(1)}L / {waterGoal.toFixed(1)}L</p>
+          </div>
+        </div>
+        <div className="mt-4 grid grid-cols-3 gap-2">
+          {[250, 500, 750].map((ml) => (
+            <button
+              className="flex min-h-11 items-center justify-center gap-1 rounded-2xl bg-[#B3C5FF] px-2 text-xs font-black text-[#002B75] transition active:scale-[0.98]"
+              key={ml}
+              onClick={() => logWater(ml)}
+              type="button"
+            >
+              <Plus size={15} />
+              {ml} ml
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="grid gap-3">
+        <div className="flex items-center justify-between">
+          <h2 className="text-2xl font-black text-white">Meal of the Day</h2>
+          <button className="text-sm font-black text-[#B3C5FF]" disabled={isLoading} onClick={() => setMealRefreshIndex((current) => current + 1)} type="button">
+            Refresh
+          </button>
+        </div>
+        <MealHeroCard meal={meal} profile={profile} />
+      </section>
+
+      <section className="grid gap-3">
+        <div className="flex items-center justify-between">
+          <p className="text-sm font-black uppercase tracking-wide text-[#CBD5E1]">Diet preference</p>
+          <p className="text-xs font-black text-[#ABD600]">{profile.dietPreference}</p>
+        </div>
+        <div className="flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {dietOptions.map((option) => {
             const isSelected = profile.dietPreference === option;
             return (
               <button
-                className={`min-h-12 rounded-2xl border px-3 text-sm font-black transition ${
+                className={`min-h-11 shrink-0 rounded-full border px-4 text-sm font-black transition ${
                   isSelected
-                    ? "border-[#3B82F6] bg-[#3B82F6] text-white shadow-lg shadow-blue-950/30"
-                    : "border-[#334155] bg-[#273449] text-[#CBD5E1]"
+                    ? "border-[#0066FF] bg-[#0066FF] text-white"
+                    : "border-[#424656] bg-transparent text-[#CBD5E1]"
                 }`}
                 key={option}
                 onClick={() => onDietPreferenceChange(option)}
@@ -3412,52 +4687,282 @@ function NutritionScreen({
         </div>
       </section>
 
-      <section className="rounded-3xl border border-[#334155] bg-[#1E293B] p-4">
-        <p className="text-sm font-black uppercase tracking-wide text-[#F97316]">Daily targets</p>
-        <div className="mt-3 grid grid-cols-2 gap-3">
-          <MetricTile label="Protein" value={plan.macros ? `${plan.macros.protein} g` : "-"} />
-          <MetricTile label="Carbs" value={plan.macros ? `${plan.macros.carbs} g` : "-"} />
-          <MetricTile label="Fats" value={plan.macros ? `${plan.macros.fats} g` : "-"} />
-          <MetricTile label="Fiber" value={plan.macros ? `${plan.macros.fiber} g` : "-"} />
-          <MetricTile label="Water" value={plan.macros ? `${plan.macros.waterLiters} L` : "-"} />
-          <MetricTile label="Diet" value={plan.dietPreference} />
-        </div>
+      <section className="grid grid-cols-2 gap-3">
+        <NutritionTipCard icon={<Flame size={25} />} title="Pre Workout" body={plan.workoutFood.before || "Banana, coffee, or light poha 45-60 minutes before training."} />
+        <NutritionTipCard icon={<Utensils size={25} />} title="Post Workout" body={plan.workoutFood.after || "Protein + carbs after training, like dal/eggs/paneer with rice or roti."} />
       </section>
 
       <section className="rounded-3xl border border-[#334155] bg-[#1E293B] p-4">
-        <p className="text-sm font-black uppercase tracking-wide text-[#F97316]">Simple meals</p>
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-sm font-black uppercase tracking-wide text-[#CBD5E1]">Food choices</p>
+          <p className="text-xs font-black text-[#ABD600]">{selectedMealStyle}</p>
+        </div>
+        <div className="mt-3 flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          {mealStyles.map((style) => {
+            const isSelected = selectedMealStyle === style;
+            return (
+              <button
+                className={`min-h-10 shrink-0 rounded-full border px-4 text-xs font-black transition ${
+                  isSelected
+                    ? "border-[#ABD600] bg-[#ABD600] text-[#283500]"
+                    : "border-[#424656] bg-[#282A2B] text-[#CBD5E1]"
+                }`}
+                key={style}
+                onClick={() => setSelectedMealStyle(style)}
+                type="button"
+              >
+                {style}
+              </button>
+            );
+          })}
+        </div>
         <div className="mt-3 grid gap-3">
-          {plan.meals.map((meal) => (
-            <div className="rounded-2xl bg-[#273449] p-3" key={meal.label}>
-              <p className="text-xs font-black text-[#CBD5E1]">{meal.label}</p>
-              <p className="mt-1 text-sm font-bold leading-6 text-white">{meal.value}</p>
+          {visibleMeals.map((mealItem) => (
+            <div className="rounded-2xl bg-[#273449] p-3" key={mealItem.label}>
+              <p className="text-xs font-black text-[#ABD600]">{mealItem.label}</p>
+              <p className="mt-1 text-sm font-bold leading-6 text-white">{mealItem.value}</p>
             </div>
           ))}
         </div>
       </section>
-
-      <section className="rounded-3xl border border-[#334155] bg-[#1E293B] p-4">
-        <p className="text-sm font-black uppercase tracking-wide text-[#F97316]">Workout food</p>
-        <div className="mt-3 grid gap-3">
-          <div className="rounded-2xl bg-[#273449] p-3">
-            <p className="text-xs font-black text-[#CBD5E1]">Before gym</p>
-            <p className="mt-1 text-sm font-bold leading-6 text-white">{plan.workoutFood.before}</p>
-          </div>
-          <div className="rounded-2xl bg-[#273449] p-3">
-            <p className="text-xs font-black text-[#CBD5E1]">After gym</p>
-            <p className="mt-1 text-sm font-bold leading-6 text-white">{plan.workoutFood.after}</p>
-          </div>
-          <div className="rounded-2xl bg-[#0F172A] p-3">
-            <p className="text-xs font-black text-[#CBD5E1]">Hydration</p>
-            <p className="mt-1 text-sm font-bold leading-6 text-white">{plan.workoutFood.hydration}</p>
-          </div>
-        </div>
-      </section>
-
-      <p className="rounded-3xl border border-[#334155] bg-[#0F172A] p-4 text-sm font-bold leading-6 text-[#CBD5E1]">
-        {plan.note}
-      </p>
     </section>
+  );
+}
+
+function getMacroCalorieShare(grams: number, caloriesPerGram: number, targetCalories: number) {
+  if (!grams || !targetCalories) return 0;
+  return Math.min(100, Math.max(5, Math.round(((grams * caloriesPerGram) / targetCalories) * 100)));
+}
+
+function getMealChoices(dietPreference: UserProfile["dietPreference"], style: MealStyle): NutritionMeal[] {
+  const choices: Record<MealStyle, Record<UserProfile["dietPreference"], NutritionMeal[]>> = {
+    "North Indian": {
+      Vegetarian: [
+        { label: "Breakfast", value: "Besan chilla + curd + fruit" },
+        { label: "Lunch", value: "Dal/rajma/chole + rice + salad" },
+        { label: "Dinner", value: "Paneer bhurji + 2 rotis + vegetables" },
+        { label: "Snack", value: "Roasted chana, peanuts, or lassi" },
+      ],
+      "Non-vegetarian": [
+        { label: "Breakfast", value: "Oats + milk + boiled eggs" },
+        { label: "Lunch", value: "Chicken curry + rice/roti + salad" },
+        { label: "Dinner", value: "Grilled chicken + dal + 2 rotis" },
+        { label: "Snack", value: "Eggs, curd, fruit, or roasted chana" },
+      ],
+      Eggetarian: [
+        { label: "Breakfast", value: "Egg bhurji + 2 rotis" },
+        { label: "Lunch", value: "Dal + rice + curd + salad" },
+        { label: "Dinner", value: "Paneer/egg curry + 2 rotis" },
+        { label: "Snack", value: "Boiled eggs, fruit, or chana" },
+      ],
+      Vegan: [
+        { label: "Breakfast", value: "Besan chilla + chutney + fruit" },
+        { label: "Lunch", value: "Rajma/chole + rice + salad" },
+        { label: "Dinner", value: "Soy chunks curry + 2 rotis + vegetables" },
+        { label: "Snack", value: "Peanut chaat, sprouts, or soy milk" },
+      ],
+    },
+    "South Indian": {
+      Vegetarian: [
+        { label: "Breakfast", value: "Idli/dosa + sambar + chutney" },
+        { label: "Lunch", value: "Rice + sambar + curd + poriyal" },
+        { label: "Dinner", value: "Uttapam + paneer/curd side" },
+        { label: "Snack", value: "Sundal, fruit, or buttermilk" },
+      ],
+      "Non-vegetarian": [
+        { label: "Breakfast", value: "Dosa + sambar + 2 boiled eggs" },
+        { label: "Lunch", value: "Chicken curry + rice + vegetables" },
+        { label: "Dinner", value: "Fish/chicken + rice + rasam" },
+        { label: "Snack", value: "Eggs, sundal, or curd rice small bowl" },
+      ],
+      Eggetarian: [
+        { label: "Breakfast", value: "Idli + sambar + egg omelette" },
+        { label: "Lunch", value: "Rice + sambar + egg podimas" },
+        { label: "Dinner", value: "Dosa + egg curry + vegetables" },
+        { label: "Snack", value: "Boiled eggs, sundal, or fruit" },
+      ],
+      Vegan: [
+        { label: "Breakfast", value: "Idli/dosa + sambar + chutney" },
+        { label: "Lunch", value: "Rice + sambar + beans poriyal" },
+        { label: "Dinner", value: "Adai dosa + chutney + vegetables" },
+        { label: "Snack", value: "Sundal, sprouts, or coconut water" },
+      ],
+    },
+    "Quick Budget": {
+      Vegetarian: [
+        { label: "Breakfast", value: "Oats + milk, or poha + curd" },
+        { label: "Lunch", value: "Dal + rice + salad" },
+        { label: "Dinner", value: "Roti + paneer/soy + vegetables" },
+        { label: "Snack", value: "Banana, peanuts, chana, or curd" },
+      ],
+      "Non-vegetarian": [
+        { label: "Breakfast", value: "Oats + milk + eggs" },
+        { label: "Lunch", value: "Chicken + rice + salad" },
+        { label: "Dinner", value: "Egg/chicken + roti + vegetables" },
+        { label: "Snack", value: "Eggs, banana, peanuts, or curd" },
+      ],
+      Eggetarian: [
+        { label: "Breakfast", value: "Poha + 2 boiled eggs" },
+        { label: "Lunch", value: "Dal + rice + curd" },
+        { label: "Dinner", value: "Egg bhurji + roti + vegetables" },
+        { label: "Snack", value: "Boiled eggs, fruit, or chana" },
+      ],
+      Vegan: [
+        { label: "Breakfast", value: "Poha, oats + soy milk, or sprouts" },
+        { label: "Lunch", value: "Dal/chole + rice + salad" },
+        { label: "Dinner", value: "Soy chunks + roti + vegetables" },
+        { label: "Snack", value: "Peanuts, chana, fruit, or soy milk" },
+      ],
+    },
+  };
+
+  return choices[style][dietPreference];
+}
+
+function getYoutubeThumbnail(videoId: string) {
+  return `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
+}
+
+function getMealSpotlightLibrary(dietPreference: UserProfile["dietPreference"], style: MealStyle, plan: NutritionPlan): MealSpotlight[] {
+  const fallbackSubtitle = plan.workoutFood.after || "A simple beginner meal to support training recovery.";
+  const library: Record<UserProfile["dietPreference"], MealSpotlight[]> = {
+    Vegetarian: [
+      { title: "Paneer Bhurji Roti Plate", style: "North Indian", image: getYoutubeThumbnail("Lxfvo6p1a14"), tag: "North Indian", subtitle: "Paneer, roti, and vegetables for an easy protein-focused meal.", prepTime: "25 min", videoId: "Lxfvo6p1a14" },
+      { title: "Rajma Chawal Bowl", style: "North Indian", image: getYoutubeThumbnail("uUQmob13Gx4"), tag: "Budget", subtitle: "Rajma, rice, and salad for a filling post-workout plate.", prepTime: "35 min", videoId: "uUQmob13Gx4" },
+      { title: "Besan Chilla + Curd", style: "Quick Budget", image: getYoutubeThumbnail("AkmaBa3PICo"), tag: "Quick", subtitle: "A fast protein-friendly meal with ingredients most homes already have.", prepTime: "15 min", videoId: "AkmaBa3PICo" },
+      { title: "Dal Chawal Bowl", style: "Quick Budget", image: getYoutubeThumbnail("AbRdwyZE-g8"), tag: "Simple", subtitle: fallbackSubtitle, prepTime: "20 min", videoId: "AbRdwyZE-g8" },
+      { title: "Idli Sambar Plate", style: "South Indian", image: getYoutubeThumbnail("3lWb4qBqrms"), tag: "South Indian", subtitle: "Idli with sambar for an easy, light meal before or after training.", prepTime: "25 min", videoId: "3lWb4qBqrms" },
+      { title: "Dosa Sambar Plate", style: "South Indian", image: getYoutubeThumbnail("BMVexJba64Y"), tag: "Beginner", subtitle: "Dosa, sambar, and curd when you want familiar comfort food.", prepTime: "25 min", videoId: "BMVexJba64Y" },
+      { title: "Paneer Chilla Plate", style: "Quick Budget", image: getYoutubeThumbnail("ACzsQTsaZiA"), tag: "High protein", subtitle: "Paneer chilla for a light training-day meal.", prepTime: "20 min", videoId: "ACzsQTsaZiA" },
+    ],
+    "Non-vegetarian": [
+      { title: "Tandoori Chicken Rice Bowl", style: "North Indian", image: getYoutubeThumbnail("-wRY7LvwjFI"), tag: "Post workout", subtitle: "Chicken, rice, and salad for a simple high-protein recovery meal.", prepTime: "30 min", videoId: "-wRY7LvwjFI" },
+      { title: "Dhaba Chicken Curry Plate", style: "North Indian", image: getYoutubeThumbnail("Uu_koz3W48Q"), tag: "Protein", subtitle: "Chicken curry with roti and salad for a familiar high-protein meal.", prepTime: "35 min", videoId: "Uu_koz3W48Q" },
+      { title: "Egg Bhurji Roti Plate", style: "North Indian", image: getYoutubeThumbnail("uzdb3Hxm2EU"), tag: "Quick", subtitle: "Egg bhurji with roti when you need a fast meal after training.", prepTime: "15 min", videoId: "uzdb3Hxm2EU" },
+      { title: "Egg Dosa Plate", style: "South Indian", image: getYoutubeThumbnail("2mZdzaKTDzA"), tag: "South Indian", subtitle: "Dosa with eggs and sambar for a simple training-day meal.", prepTime: "20 min", videoId: "2mZdzaKTDzA" },
+      { title: "Chicken Meal Prep Bowl", style: "Quick Budget", image: getYoutubeThumbnail("el4RuWPWZ6A"), tag: "Meal prep", subtitle: "Cook once and split into two simple protein meals.", prepTime: "30 min", videoId: "el4RuWPWZ6A" },
+      { title: "Egg Curry Rice Bowl", style: "North Indian", image: getYoutubeThumbnail("xH2iedsq0qA"), tag: "Protein", subtitle: "Egg curry with rice or roti for a filling post-workout plate.", prepTime: "25 min", videoId: "xH2iedsq0qA" },
+      { title: "Masala Omelette Toast", style: "Quick Budget", image: getYoutubeThumbnail("I1zuqz5DfT0"), tag: "Quick", subtitle: "Masala omelette with toast or roti for a fast protein meal.", prepTime: "12 min", videoId: "I1zuqz5DfT0" },
+    ],
+    Eggetarian: [
+      { title: "Egg Bhurji Roti Plate", style: "North Indian", image: getYoutubeThumbnail("uzdb3Hxm2EU"), tag: "Beginner", subtitle: "Egg bhurji, roti, and salad for quick protein without heavy prep.", prepTime: "15 min", videoId: "uzdb3Hxm2EU" },
+      { title: "Egg Curry Rice Bowl", style: "North Indian", image: getYoutubeThumbnail("xH2iedsq0qA"), tag: "Protein", subtitle: "Egg curry with rice or roti for a filling post-workout plate.", prepTime: "25 min", videoId: "xH2iedsq0qA" },
+      { title: "Masala Omelette Toast", style: "Quick Budget", image: getYoutubeThumbnail("I1zuqz5DfT0"), tag: "Quick", subtitle: "Masala omelette with toast or roti for a fast protein meal.", prepTime: "12 min", videoId: "I1zuqz5DfT0" },
+      { title: "Egg Dosa Plate", style: "South Indian", image: getYoutubeThumbnail("2mZdzaKTDzA"), tag: "South Indian", subtitle: "Egg dosa for a familiar breakfast-style protein option.", prepTime: "20 min", videoId: "2mZdzaKTDzA" },
+      { title: "Poha + Boiled Eggs", style: "Quick Budget", image: getYoutubeThumbnail("h0vqeRrGMAE"), tag: "Budget", subtitle: "Poha with boiled eggs on the side for a beginner-friendly meal.", prepTime: "15 min", videoId: "h0vqeRrGMAE" },
+      { title: "Boiled Egg Salad", style: "Quick Budget", image: getYoutubeThumbnail("lzJbRIFbU5U"), tag: "No fuss", subtitle: "Boiled eggs, onion, tomato, lemon, and masala for a quick snack meal.", prepTime: "10 min", videoId: "lzJbRIFbU5U" },
+      { title: "Paneer Chilla Plate", style: "North Indian", image: getYoutubeThumbnail("ACzsQTsaZiA"), tag: "High protein", subtitle: "Paneer chilla for a light training-day meal.", prepTime: "20 min", videoId: "ACzsQTsaZiA" },
+    ],
+    Vegan: [
+      { title: "Soya Chunks Curry Bowl", style: "North Indian", image: getYoutubeThumbnail("GrhRKz15UWU"), tag: "Plant protein", subtitle: "Soya chunks with rice or roti for a simple vegan protein meal.", prepTime: "25 min", videoId: "GrhRKz15UWU" },
+      { title: "Chole Rice Bowl", style: "North Indian", image: getYoutubeThumbnail("bGrYqbSVs4Y"), tag: "Budget", subtitle: "Chole, rice, and salad for a filling plant-based meal.", prepTime: "30 min", videoId: "bGrYqbSVs4Y" },
+      { title: "Rajma Chawal Bowl", style: "North Indian", image: getYoutubeThumbnail("uUQmob13Gx4"), tag: "Simple", subtitle: "Rajma, rice, and salad for a repeatable budget meal.", prepTime: "35 min", videoId: "uUQmob13Gx4" },
+      { title: "Idli Sambar Plate", style: "South Indian", image: getYoutubeThumbnail("3lWb4qBqrms"), tag: "Vegan", subtitle: "Idli and sambar for a light plant-based meal.", prepTime: "25 min", videoId: "3lWb4qBqrms" },
+      { title: "Adai Dosa Plate", style: "South Indian", image: getYoutubeThumbnail("hnW5J3kX-nk"), tag: "Protein", subtitle: "Lentil dosa with chutney and vegetables for plant protein.", prepTime: "30 min", videoId: "hnW5J3kX-nk" },
+      { title: "Sprouts Chaat Bowl", style: "Quick Budget", image: getYoutubeThumbnail("paBDseb8rKg"), tag: "No-cook", subtitle: "Sprouts, peanuts, onion, tomato, lemon, and masala.", prepTime: "10 min", videoId: "paBDseb8rKg" },
+      { title: "Black Chana Salad", style: "Quick Budget", image: getYoutubeThumbnail("zeMnWRpCfrw"), tag: "Budget", subtitle: "Black chana, onion, tomato, lemon, and masala for plant protein.", prepTime: "10 min", videoId: "zeMnWRpCfrw" },
+    ],
+  };
+
+  const meals = library[dietPreference];
+  return [...meals.filter((meal) => meal.style === style), ...meals.filter((meal) => meal.style !== style)].slice(0, 7);
+}
+
+function MacroRing({
+  label,
+  percent,
+  tone,
+  value,
+}: {
+  label: string;
+  percent: number;
+  tone: "blue" | "lime" | "silver";
+  value: string;
+}) {
+  const color = tone === "blue" ? "#B3C5FF" : tone === "lime" ? "#ABD600" : "#E2E2E2";
+  const safePercent = Math.min(100, Math.max(0, percent));
+
+  return (
+    <div className="grid justify-items-center gap-2 text-center">
+      <div
+        className="grid h-[86px] w-[86px] place-items-center rounded-full"
+        style={{ background: `conic-gradient(${color} ${safePercent * 3.6}deg, #333535 0deg)` }}
+      >
+        <div className="grid h-[62px] w-[62px] place-items-center rounded-full bg-[#121414]">
+          <p className="text-lg font-black text-white">{safePercent}%</p>
+        </div>
+      </div>
+      <div>
+        <p className="text-sm font-bold text-[#CBD5E1]">{label}</p>
+        <p className={`text-lg font-black ${tone === "lime" ? "text-[#ABD600]" : tone === "blue" ? "text-[#B3C5FF]" : "text-white"}`}>{value}</p>
+      </div>
+    </div>
+  );
+}
+
+function MealHeroCard({
+  meal,
+  profile,
+}: {
+  meal: MealSpotlight;
+  profile: UserProfile;
+}) {
+  const [showVideo, setShowVideo] = useState(false);
+
+  return (
+    <div className="grid gap-3">
+      <article
+        className="relative min-h-[260px] overflow-hidden rounded-3xl border border-[#334155] bg-[#111827] p-5"
+        style={{
+          backgroundImage: `linear-gradient(180deg, rgba(18,20,20,0.05), rgba(18,20,20,0.9)), url('${meal.image}')`,
+          backgroundPosition: "center",
+          backgroundSize: "cover",
+        }}
+      >
+        <div className="absolute right-4 top-4 rounded-full bg-[#121414]/80 px-3 py-2 text-xs font-black text-white backdrop-blur">
+          <Timer className="mr-1 inline" size={14} />
+          {meal.prepTime}
+        </div>
+        <div className="flex min-h-[220px] flex-col justify-end">
+          <div className="flex flex-wrap gap-2">
+            <span className="rounded-full border border-[#B3C5FF] bg-[#121414]/40 px-3 py-1 text-[11px] font-black uppercase text-[#B3C5FF] backdrop-blur">{meal.tag}</span>
+            <span className="rounded-full border border-white/40 bg-[#121414]/40 px-3 py-1 text-[11px] font-black uppercase text-white backdrop-blur">{profile.experienceLevel}</span>
+          </div>
+          <h2 className="mt-4 text-2xl font-black leading-tight text-white">{meal.title}</h2>
+          <p className="mt-2 line-clamp-2 text-sm font-semibold leading-6 text-[#CBD5E1]">{meal.subtitle}</p>
+          <button
+            className="mt-4 flex min-h-11 w-fit items-center gap-2 rounded-full bg-[#ABD600] px-4 text-sm font-black text-[#283500] transition active:scale-[0.98]"
+            onClick={() => setShowVideo((current) => !current)}
+            type="button"
+          >
+            <Play size={16} fill="currentColor" />
+            {showVideo ? "Hide recipe" : "Watch recipe"}
+          </button>
+        </div>
+      </article>
+      {showVideo && (
+        <div className="overflow-hidden rounded-3xl border border-[#334155] bg-[#1E293B]">
+          <iframe
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+            allowFullScreen
+            className="aspect-video w-full"
+            loading="lazy"
+            src={`https://www.youtube.com/embed/${meal.videoId}`}
+            title={`${meal.title} recipe video`}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function NutritionTipCard({ body, icon, title }: { body: string; icon: React.ReactNode; title: string }) {
+  return (
+    <article className="min-h-[164px] rounded-3xl border border-[#334155] bg-[#1E293B] p-4">
+      <div className="text-[#ABD600]">{icon}</div>
+      <h3 className="mt-8 text-lg font-black text-white">{title}</h3>
+      <p className="mt-2 text-sm font-semibold leading-6 text-[#CBD5E1]">{body}</p>
+    </article>
   );
 }
 
@@ -3468,8 +4973,11 @@ function ProfileScreen({
   syncMessage,
   lastSyncedAt,
   userEmail,
-  onEmailSignIn,
   onManualSync,
+  onPasswordAuth,
+  onPasswordReset,
+  onPasswordUpdate,
+  onProfileUpdate,
   onSignOut,
 }: {
   profile: UserProfile;
@@ -3478,12 +4986,34 @@ function ProfileScreen({
   syncMessage: string;
   lastSyncedAt: string;
   userEmail: string;
-  onEmailSignIn: (email: string) => Promise<boolean>;
   onManualSync: () => void;
+  onPasswordAuth: (email: string, password: string, mode: AuthMode) => Promise<boolean>;
+  onPasswordReset: (email: string) => Promise<boolean>;
+  onPasswordUpdate: (password: string) => Promise<boolean>;
+  onProfileUpdate: (profile: UserProfile) => void;
   onSignOut: () => void;
 }) {
   const isSignedIn = authStatus === "signed-in";
   const isBusy = authStatus === "checking" || syncStatus === "loading" || syncStatus === "saving";
+  const canUseCloudSave = authStatus !== "unconfigured";
+  const [isEditingProfile, setIsEditingProfile] = useState(false);
+  const [draftProfile, setDraftProfile] = useState<UserProfile>(profile);
+  const fieldErrors = getOnboardingFieldErrors(draftProfile);
+  const canUpdateProfile = isValidOnboardingProfile(draftProfile);
+
+  useEffect(() => {
+    setDraftProfile(profile);
+  }, [profile]);
+
+  function updateDraftProfile<K extends keyof UserProfile>(key: K, value: UserProfile[K]) {
+    setDraftProfile((current) => ({ ...current, [key]: value }));
+  }
+
+  function saveProfileUpdate() {
+    if (!canUpdateProfile) return;
+    onProfileUpdate(draftProfile);
+    setIsEditingProfile(false);
+  }
 
   return (
     <section className="flex flex-1 flex-col gap-4 p-4 pb-20 pt-3 sm:gap-5 sm:p-5 sm:pt-4 sm:pb-24">
@@ -3493,7 +5023,76 @@ function ProfileScreen({
         <p className="text-sm font-black uppercase tracking-wide text-teal-800">GymBuddy profile</p>
         <h2 className="mt-2 text-2xl font-black text-slate-950 sm:text-3xl">{profile.name || "Beginner Athlete"}</h2>
         <p className="mt-2 font-bold text-slate-600">{profile.goal} | {profile.experienceLevel}</p>
+        <button
+          className="mt-4 min-h-11 rounded-2xl bg-[#0066FF] px-4 text-sm font-black text-white"
+          onClick={() => setIsEditingProfile((current) => !current)}
+          type="button"
+        >
+          {isEditingProfile ? "Close edit" : "Edit profile"}
+        </button>
       </div>
+
+      {isEditingProfile && (
+        <div className="grid gap-4 rounded-3xl border border-[#334155] bg-[#1E293B] p-4">
+          <div className="grid grid-cols-2 gap-3">
+            <TextField
+              error={fieldErrors.name}
+              label="Name"
+              placeholder="Your name"
+              value={draftProfile.name}
+              onChange={(value) => updateDraftProfile("name", cleanAlphabetName(value))}
+            />
+            <NumberField
+              error={fieldErrors.age}
+              label="Age"
+              max={VALUE_RULES.age.max}
+              min={VALUE_RULES.age.min}
+              placeholder="24"
+              suffix="yrs"
+              value={draftProfile.age}
+              onChange={(value) => updateDraftProfile("age", value)}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <NumberField
+              error={fieldErrors.height}
+              label="Height"
+              max={VALUE_RULES.height.max}
+              min={VALUE_RULES.height.min}
+              placeholder="170"
+              suffix="cm"
+              value={draftProfile.height}
+              onChange={(value) => updateDraftProfile("height", value)}
+            />
+            <NumberField
+              error={fieldErrors.weight}
+              label="Weight"
+              max={VALUE_RULES.weight.max}
+              min={VALUE_RULES.weight.min}
+              placeholder="70"
+              step="0.1"
+              suffix="kg"
+              value={draftProfile.weight}
+              onChange={(value) => updateDraftProfile("weight", value)}
+            />
+          </div>
+          <SelectField label="Gender" value={draftProfile.gender} onChange={(value) => updateDraftProfile("gender", value as UserProfile["gender"])} options={["Male", "Female", "Other"]} />
+          <SelectField label="Goal" value={draftProfile.goal} onChange={(value) => updateDraftProfile("goal", value as UserProfile["goal"])} options={["Lose fat", "Build strength", "Build muscle", "General fitness"]} />
+          <SelectField label="Body goal" value={draftProfile.bodyGoal} onChange={(value) => updateDraftProfile("bodyGoal", value as BodyGoal)} options={["Lose weight slowly", "Maintain weight", "Gain muscle slowly"]} />
+          <SelectField label="Diet" value={draftProfile.dietPreference} onChange={(value) => updateDraftProfile("dietPreference", value as UserProfile["dietPreference"])} options={["Vegetarian", "Non-vegetarian", "Eggetarian", "Vegan"]} />
+          <SelectField label="Gym type" value={draftProfile.gymType} onChange={(value) => updateDraftProfile("gymType", value as UserProfile["gymType"])} options={["Basic gym", "Highly equipped gym"]} />
+          <SelectField label="Days per week" value={draftProfile.daysPerWeek} onChange={(value) => updateDraftProfile("daysPerWeek", value as UserProfile["daysPerWeek"])} options={["3 days", "4 days", "5 days"]} />
+          <SelectField label="Time per workout" value={draftProfile.workoutDuration} onChange={(value) => updateDraftProfile("workoutDuration", value as UserProfile["workoutDuration"])} options={["30 minutes", "45 minutes", "60 minutes"]} />
+          <button
+            className="min-h-12 rounded-2xl bg-[#ABD600] px-4 text-sm font-black text-[#283500] disabled:opacity-50"
+            disabled={!canUpdateProfile}
+            onClick={saveProfileUpdate}
+            type="button"
+          >
+            Update profile
+          </button>
+        </div>
+      )}
 
       <div className="grid grid-cols-2 gap-3">
         <MetricTile label="Age" value={profile.age || "-"} />
@@ -3527,57 +5126,51 @@ function ProfileScreen({
           <div>
             <p className="text-sm font-black uppercase tracking-wide text-[#F97316]">Cloud save</p>
             <h2 className="mt-1 text-xl font-black text-white">
-              {authStatus === "unconfigured" ? "Connect Supabase" : isSignedIn ? "Plan saved online" : "Save your plan"}
+              {isSignedIn ? "Plan saved online" : "Save your plan"}
             </h2>
-            <p className="mt-2 text-sm font-semibold leading-6 text-[#CBD5E1]">
-              {authStatus === "unconfigured"
-                ? "Add your Supabase URL and publishable key to enable login and cloud progress."
-                : isSignedIn
-                  ? `Signed in${userEmail ? ` as ${userEmail}` : ""}. ${lastSyncedAt ? `Last sync ${lastSyncedAt}.` : "Sync is active."}`
-                  : "Progress is saved on this device. Add email backup only if you want cloud recovery."}
-            </p>
+            {isSignedIn && <p className="mt-2 text-sm font-semibold leading-6 text-[#CBD5E1]">{userEmail || "Account connected"}</p>}
           </div>
         </div>
 
-        <p className={`mt-4 rounded-2xl px-4 py-3 text-sm font-bold ${syncStatus === "error" ? "bg-red-500/15 text-red-200" : "bg-[#0F172A] text-[#CBD5E1]"}`}>
-          {syncMessage}
-        </p>
+        <div className="mt-4">
+          <SaveStatusRow
+            canUseCloudSave={canUseCloudSave}
+            isSignedIn={isSignedIn}
+            message={lastSyncedAt ? `Synced ${lastSyncedAt}` : syncMessage}
+            status={syncStatus}
+          />
+        </div>
 
-        {authStatus === "unconfigured" ? (
-          <div className="mt-4 rounded-2xl border border-[#334155] bg-[#0F172A] p-4">
-            <p className="text-sm font-black text-white">Required env vars</p>
-            <p className="mt-2 font-mono text-xs leading-6 text-[#CBD5E1]">
-              VITE_SUPABASE_URL
-              <br />
-              VITE_SUPABASE_PUBLISHABLE_KEY
-            </p>
+        {isSignedIn ? (
+          <div className="mt-4 grid gap-3">
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                className="flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-[#3B82F6] px-4 text-sm font-black text-white disabled:opacity-60"
+                disabled={isBusy}
+                onClick={onManualSync}
+                type="button"
+              >
+                <Cloud size={18} />
+                Sync now
+              </button>
+              <button
+                className="flex min-h-12 items-center justify-center gap-2 rounded-2xl border border-[#334155] bg-[#1E293B] px-4 text-sm font-black text-white"
+                onClick={onSignOut}
+                type="button"
+              >
+                <LogOut size={18} />
+                Sign out
+              </button>
+            </div>
+            <PasswordUpdateForm disabled={isBusy} onUpdate={onPasswordUpdate} />
           </div>
-        ) : isSignedIn ? (
-          <div className="mt-4 grid grid-cols-2 gap-3">
-            <button
-              className="flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-[#3B82F6] px-4 text-sm font-black text-white disabled:opacity-60"
-              disabled={isBusy}
-              onClick={onManualSync}
-              type="button"
-            >
-              <Cloud size={18} />
-              Sync now
-            </button>
-            <button
-              className="flex min-h-12 items-center justify-center gap-2 rounded-2xl border border-[#334155] bg-[#1E293B] px-4 text-sm font-black text-white"
-              onClick={onSignOut}
-              type="button"
-            >
-              <LogOut size={18} />
-              Sign out
-            </button>
+        ) : canUseCloudSave ? (
+          <div className="mt-4 grid gap-3">
+            <PasswordBackupForm disabled={isBusy} onAuth={onPasswordAuth} onResetPassword={onPasswordReset} />
           </div>
         ) : (
-          <div className="mt-4 grid gap-3">
-            <EmailLinkBackupForm
-              disabled={isBusy}
-              onSendLink={onEmailSignIn}
-            />
+          <div className="mt-4 rounded-2xl bg-[#0F172A] p-4">
+            <SaveMiniItem icon={<CheckCircle2 size={18} />} label="Device save on" />
           </div>
         )}
       </div>
@@ -3590,24 +5183,24 @@ function BottomNav({
   activeTab,
   onNavigate,
 }: {
-  activeTab: "exercise" | "nutrition" | "progress" | "profile";
-  onNavigate: (tab: "exercise" | "nutrition" | "progress" | "profile") => void;
+  activeTab: MainTab;
+  onNavigate: (tab: MainTab) => void;
 }) {
   const items = [
+    { id: "home" as const, label: "Home", icon: House },
     { id: "exercise" as const, label: "Exercise", icon: Dumbbell },
     { id: "nutrition" as const, label: "Nutrition", icon: Apple },
     { id: "progress" as const, label: "Progress", icon: BarChart3 },
-    { id: "profile" as const, label: "Profile", icon: User },
   ];
 
   return (
-    <nav className="sticky bottom-0 z-30 grid grid-cols-4 border-t border-slate-200 bg-white/95 pb-[env(safe-area-inset-bottom)] shadow-[0_-12px_30px_rgba(15,23,42,0.08)] backdrop-blur">
+    <nav className="fixed bottom-0 left-1/2 z-40 grid w-full max-w-md -translate-x-1/2 grid-cols-4 border-t border-[#334155] bg-[#0F172A]/95 pb-[env(safe-area-inset-bottom)] shadow-[0_-12px_30px_rgba(0,0,0,0.28)] backdrop-blur sm:bottom-5 sm:rounded-b-[2rem] sm:border-x">
       {items.map((item, index) => {
         const Icon = item.icon;
         const isActive = activeTab === item.id;
         return (
           <button
-            className={`flex min-h-[3.5rem] flex-col items-center justify-center gap-0.5 text-[10px] font-black sm:min-h-16 sm:gap-1 sm:text-[11px] ${index > 0 ? "border-l border-slate-200" : ""} ${isActive ? "bg-[#EAF7F6] text-teal-900" : "text-slate-500"}`}
+            className={`flex min-h-[3.5rem] flex-col items-center justify-center gap-0.5 text-[10px] font-black sm:min-h-16 sm:gap-1 sm:text-[11px] ${index > 0 ? "border-l border-[#1E293B]" : ""} ${isActive ? "bg-[#1E293B] text-[#F97316]" : "text-[#CBD5E1]"}`}
             key={item.id}
             onClick={() => onNavigate(item.id)}
             type="button"
@@ -3649,17 +5242,35 @@ function VideoModal({ video, onClose }: { video: VideoTarget; onClose: () => voi
 }
 
 function CheckInScreen({
+  activitySummary,
+  day,
+  log,
   checkIn,
   setCheckIn,
+  onUpdateWorkoutWeight,
   onSave,
 }: {
+  activitySummary: ReturnType<typeof getWorkoutActivitySummary>;
+  day: DayPlan | null;
+  log: DailyWorkoutLog;
   checkIn: WorkoutCheckIn;
   setCheckIn: (checkIn: WorkoutCheckIn) => void;
+  onUpdateWorkoutWeight: (day: DayPlan, key: "beforeWeight" | "afterWeight", value: string) => void;
   onSave: () => void;
 }) {
   return (
-    <section className="flex flex-1 flex-col gap-4 p-4 pt-3 sm:gap-5 sm:p-5 sm:pt-4">
+    <section className="flex flex-1 flex-col gap-4 p-4 pb-24 pt-3 sm:gap-5 sm:p-5 sm:pb-28 sm:pt-4">
       <ScreenTitle icon={<HeartPulse size={22} />} title="Workout Check-In" subtitle="Quick answers so next week can adjust." />
+      <section className="rounded-3xl border border-[#334155] bg-[#1E293B] p-4">
+        <p className="text-sm font-black uppercase tracking-wide text-[#F97316]">Activity summary</p>
+        <div className="mt-3 grid grid-cols-2 gap-3">
+          <MetricTile label="Warm-up" value={formatDuration(activitySummary.warmUpSeconds)} />
+          <MetricTile label="Exercise" value={formatDuration(activitySummary.workoutSeconds)} />
+          <MetricTile label="Cooldown" value={formatDuration(activitySummary.coolDownSeconds)} />
+          <MetricTile label="Active total" value={formatDuration(activitySummary.activeSeconds)} />
+          <MetricTile label="Rest time" value={formatDuration(activitySummary.restSeconds)} />
+        </div>
+      </section>
       <SelectField label="Did you complete today&apos;s workout?" value={checkIn.completionStatus} onChange={(value) => setCheckIn({ ...checkIn, completionStatus: value as WorkoutCheckIn["completionStatus"] })} options={["Completed", "Partly completed", "Skipped"]} />
       <SelectField label="How difficult was it?" value={checkIn.difficulty} onChange={(value) => setCheckIn({ ...checkIn, difficulty: value as WorkoutCheckIn["difficulty"] })} options={["Easy", "Manageable", "Hard"]} />
       <SelectField
@@ -3677,6 +5288,15 @@ function CheckInScreen({
         />
       )}
       <SelectField label="Confidence for next workout" value={checkIn.confidence} onChange={(value) => setCheckIn({ ...checkIn, confidence: value as WorkoutCheckIn["confidence"] })} options={["Low", "Medium", "High"]} />
+      {day && !day.isRestDay && (
+        <section className="rounded-3xl border border-[#334155] bg-[#1E293B] p-4">
+          <p className="text-sm font-black uppercase tracking-wide text-[#F97316]">After workout weight</p>
+          <p className="mt-1 text-sm font-semibold leading-6 text-[#CBD5E1]">This updates today&apos;s calorie target.</p>
+          <div className="mt-3">
+            <WeightInput label="After" value={log.afterWeight} onChange={(value) => onUpdateWorkoutWeight(day, "afterWeight", value)} />
+          </div>
+        </section>
+      )}
       <button className="mt-auto flex min-h-[3.25rem] w-full items-center justify-center gap-2 rounded-2xl bg-[#40B5AD] px-5 font-black text-slate-950 shadow-xl shadow-teal-200 sm:min-h-14" onClick={onSave} type="button">
         Save Check-In
         <CheckCircle2 size={20} />
@@ -3742,7 +5362,7 @@ function ScreenTitle({ icon, title, subtitle }: { icon: React.ReactNode; title: 
       <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-[#40B5AD] text-slate-950 sm:h-11 sm:w-11">{icon}</div>
       <div>
         <h1 className="text-xl font-black leading-tight text-slate-950 sm:text-2xl">{title}</h1>
-        <p className="mt-1 text-sm leading-5 text-slate-600 sm:text-base sm:leading-6">{subtitle}</p>
+        {subtitle && <p className="mt-1 text-sm leading-5 text-slate-600 sm:text-base sm:leading-6">{subtitle}</p>}
       </div>
     </header>
   );
@@ -3822,65 +5442,92 @@ function SelectField({
 }
 
 function TextField({
+  error,
+  helper,
   label,
   placeholder,
   value,
   onChange,
 }: {
+  error?: string;
+  helper?: string;
   label: string;
   placeholder: string;
   value: string;
   onChange: (value: string) => void;
 }) {
+  const message = error || helper;
   return (
     <label className="grid gap-2">
       <span className="text-sm font-black text-slate-800">{label}</span>
       <input
         aria-label={label}
-        className="min-h-12 rounded-2xl border border-slate-200 bg-white px-4 font-semibold text-slate-900 outline-none focus:border-[#2F9F98] focus:ring-4 focus:ring-teal-100"
+        className={`min-h-12 rounded-2xl border bg-white px-4 font-semibold text-slate-900 outline-none focus:ring-4 ${
+          error ? "border-[#EF4444] focus:border-[#EF4444] focus:ring-red-100" : "border-slate-200 focus:border-[#2F9F98] focus:ring-teal-100"
+        }`}
         placeholder={placeholder}
         type="text"
         value={value}
         onChange={(event) => onChange(event.target.value)}
       />
+      {message && <span className={`text-xs font-bold ${error ? "text-[#EF4444]" : "text-slate-500"}`}>{message}</span>}
     </label>
   );
 }
 
 function NumberField({
+  error,
+  helper,
   label,
+  max,
+  min,
   placeholder,
   required = true,
+  step = "1",
   suffix,
   value,
   onChange,
 }: {
+  error?: string;
+  helper?: string;
   label: string;
+  max?: number;
+  min?: number;
   placeholder?: string;
   required?: boolean;
+  step?: string;
   suffix: string;
   value: string;
   onChange: (value: string) => void;
 }) {
+  const message = error || helper;
   return (
     <label className="grid gap-2">
       <span className="text-sm font-black text-slate-800">{label}</span>
-      <div className="flex min-h-12 items-center rounded-2xl border border-slate-200 bg-white px-4 focus-within:border-[#2F9F98] focus-within:ring-4 focus-within:ring-teal-100">
+      <div
+        className={`flex min-h-12 items-center rounded-2xl border bg-white px-4 focus-within:ring-4 ${
+          error ? "border-[#EF4444] focus-within:border-[#EF4444] focus-within:ring-red-100" : "border-slate-200 focus-within:border-[#2F9F98] focus-within:ring-teal-100"
+        }`}
+      >
         <input
           aria-label={label}
           className="w-full bg-transparent font-semibold text-slate-900 outline-none"
           inputMode="decimal"
-          min="1"
+          max={max}
+          min={min}
           placeholder={placeholder}
           required={required}
+          step={step}
           type="number"
           value={value}
           onChange={(event) => onChange(event.target.value)}
         />
         <span className="text-sm font-black text-slate-400">{suffix}</span>
       </div>
+      {message && <span className={`text-xs font-bold leading-4 ${error ? "text-[#EF4444]" : "text-slate-500"}`}>{message}</span>}
     </label>
   );
 }
 
 export default App;
+
