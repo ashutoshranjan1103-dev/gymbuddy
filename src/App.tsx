@@ -434,7 +434,7 @@ function getNotificationPermission(): ReminderPermission {
 
 function isWorkoutDayComplete(day: DayPlan, completion: ExerciseCompletion) {
   const trackableItems = [...day.warmUp, ...day.exercises, ...day.coolDown];
-  return !day.isRestDay && trackableItems.length > 0 && trackableItems.every((item) => completion[item.id] === "Done");
+  return !day.isRestDay && trackableItems.length > 0 && trackableItems.every((item) => getCompletionStatus(completion, day, item.id) === "Done");
 }
 
 function getNextWorkoutDayIndex(plan: WeeklyPlan | null, completion: ExerciseCompletion) {
@@ -1425,6 +1425,41 @@ function wait(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
+function getCompletionKey(day: DayPlan, itemId: string) {
+  return `${day.day}:${itemId}`;
+}
+
+function getCompletionStatus(completion: ExerciseCompletion, day: DayPlan, itemId: string): ExerciseStatus | undefined {
+  return completion[getCompletionKey(day, itemId)];
+}
+
+function normalizeCompletionForPlan(plan: WeeklyPlan | null, completion: ExerciseCompletion) {
+  if (!plan) return completion;
+
+  const legacyKeys = new Set(Object.keys(completion).filter((key) => !key.includes(":")));
+  if (!legacyKeys.size) return completion;
+
+  let changed = false;
+  const next = Object.fromEntries(
+    Object.entries(completion).filter(([key]) => {
+      if (!key.includes(":")) {
+        changed = true;
+        return false;
+      }
+
+      const baseKey = key.slice(key.indexOf(":") + 1);
+      if (legacyKeys.has(baseKey)) {
+        changed = true;
+        return false;
+      }
+
+      return true;
+    }),
+  ) as ExerciseCompletion;
+
+  return changed ? next : completion;
+}
+
 function createEmptySectionLog(): WorkoutSectionLog {
   return { startedAt: "", stoppedAt: "", elapsedSeconds: 0, runningSince: "" };
 }
@@ -1504,7 +1539,7 @@ function getWorkoutActivitySummary(day: DayPlan | null, log: DailyWorkoutLog, co
   const activeSeconds = warmUpSeconds + workoutSeconds + coolDownSeconds;
   const completedRestSeconds =
     day?.exercises.reduce((sum, exercise) => {
-      const status = completion[exercise.id];
+      const status = getCompletionStatus(completion, day, exercise.id);
       if (status !== "Done" && status !== "Partially done") return sum;
       return sum + exercise.main.restSeconds;
     }, 0) ?? 0;
@@ -1558,16 +1593,19 @@ function getLoggedSetSummary(logs: SetPerformanceLog[] | undefined, isTimeBased:
   return `${validRows.length} sets | ${totalReps} reps`;
 }
 
-function getExercisePerformanceRows(plan: WeeklyPlan | null, workoutLogs: WorkoutLogs, exerciseSelection: ExerciseSelection = {}): ExercisePerformanceRow[] {
+function getExercisePerformanceRows(plan: WeeklyPlan | null, workoutLogs: WorkoutLogs, exerciseSelection: ExerciseSelection = {}, completion: ExerciseCompletion = {}): ExercisePerformanceRow[] {
   if (!plan) return [];
 
-  return plan.days.flatMap((day) => getDayExercisePerformanceRows(day, workoutLogs[day.day], exerciseSelection));
+  return plan.days.flatMap((day) => getDayExercisePerformanceRows(day, workoutLogs[day.day], exerciseSelection, completion));
 }
 
-function getDayExercisePerformanceRows(day: DayPlan, log: DailyWorkoutLog | undefined, exerciseSelection: ExerciseSelection = {}): ExercisePerformanceRow[] {
+function getDayExercisePerformanceRows(day: DayPlan, log: DailyWorkoutLog | undefined, exerciseSelection: ExerciseSelection = {}, completion: ExerciseCompletion = {}): ExercisePerformanceRow[] {
   if (!log?.setLogs) return [];
 
   return day.exercises.flatMap((exercise) => {
+    const status = getCompletionStatus(completion, day, exercise.id);
+    if (status !== "Done" && status !== "Partially done") return [];
+
     const setLogs = (log.setLogs[exercise.id] ?? []).filter((set) => set.weight || set.reps || set.duration);
     if (!setLogs.length) return [];
 
@@ -1598,9 +1636,9 @@ function getDayProgress(day: DayPlan, completion: ExerciseCompletion) {
     return { total: 0, done: 0, partial: 0, skipped: 0, percent: 0, isComplete: false };
   }
 
-  const done = trackableItems.filter((item) => completion[item.id] === "Done").length;
-  const partial = trackableItems.filter((item) => completion[item.id] === "Partially done").length;
-  const skipped = trackableItems.filter((item) => completion[item.id] === "Not done").length;
+  const done = trackableItems.filter((item) => getCompletionStatus(completion, day, item.id) === "Done").length;
+  const partial = trackableItems.filter((item) => getCompletionStatus(completion, day, item.id) === "Partially done").length;
+  const skipped = trackableItems.filter((item) => getCompletionStatus(completion, day, item.id) === "Not done").length;
   const progressUnits = done + partial * 0.5;
   const percent = Math.round((progressUnits / trackableItems.length) * 100);
 
@@ -1837,6 +1875,17 @@ function App() {
     writeStorage(STORAGE_KEYS.lastActiveScreen, screen);
     writeStorage(STORAGE_KEYS.lastActiveDate, getTodayKey());
   }, [screen]);
+
+  useEffect(() => {
+    const normalizedCompletion = normalizeCompletionForPlan(weeklyPlan, completion);
+    if (normalizedCompletion === completion) return;
+
+    setCompletion(normalizedCompletion);
+    writeStorage(STORAGE_KEYS.completion, normalizedCompletion);
+    const nextMonthlyProgress = upsertMonthlyProgress(monthlyProgress, weeklyPlan, normalizedCompletion);
+    setMonthlyProgress(nextMonthlyProgress);
+    writeStorage(STORAGE_KEYS.monthlyProgress, nextMonthlyProgress);
+  }, [completion, monthlyProgress, weeklyPlan]);
 
   useEffect(() => {
     if (!headerToast) return;
@@ -2507,13 +2556,14 @@ function App() {
     writeStorage(STORAGE_KEYS.monthlyProgress, nextMonthlyProgress);
 
     if (status === "Done") {
+      const rawItemId = id.includes(":") ? id.slice(id.indexOf(":") + 1) : id;
       const now = new Date().toISOString();
       const nowTime = new Date(now).getTime();
       setWorkoutLogs((current) => {
         let changed = false;
         const nextLogs = Object.fromEntries(
           Object.entries(current).map(([dayKey, dayLog]) => {
-            const timer = dayLog.itemTimers[id];
+            const timer = dayLog.itemTimers[rawItemId];
             if (!timer?.runningSince) return [dayKey, dayLog];
             changed = true;
             return [
@@ -2522,7 +2572,7 @@ function App() {
                 ...dayLog,
                 itemTimers: {
                   ...dayLog.itemTimers,
-                  [id]: {
+                  [rawItemId]: {
                     ...timer,
                     stoppedAt: now,
                     elapsedSeconds: getSectionElapsedSeconds(timer, nowTime),
@@ -3862,7 +3912,7 @@ function TodayWorkoutScreen({
   }, []);
 
   const queue = getWorkoutQueue(day);
-  const currentIndex = queue.findIndex((item) => completion[item.id] !== "Done");
+  const currentIndex = queue.findIndex((item) => getCompletionStatus(completion, day, item.id) !== "Done");
   const currentItem = currentIndex >= 0 ? queue[currentIndex] : null;
   const upcomingItem = currentIndex >= 0 ? queue[currentIndex + 1] : null;
   const dayProgress = getDayProgress(day, completion);
@@ -3882,11 +3932,11 @@ function TodayWorkoutScreen({
             <ActivityCard
               activity={activity}
               key={activity.id}
-              status={completion[activity.id] ?? "Not done"}
+              status={getCompletionStatus(completion, day, activity.id) ?? "Not done"}
               timer={getItemTimer(log, activity.id)}
               onOpenVideo={onOpenVideo}
               onToggleTimer={() => onToggleItemTimer(day, activity.id)}
-              onUpdateStatus={(status) => onUpdateExerciseStatus(activity.id, status)}
+              onUpdateStatus={(status) => onUpdateExerciseStatus(getCompletionKey(day, activity.id), status)}
             />
           ))}
         </SimpleWorkoutSection>
@@ -3934,15 +3984,15 @@ function TodayWorkoutScreen({
             <ActivityCard
               activity={currentItem.activity}
               key={currentItem.id}
-              status={completion[currentItem.id] ?? "Not done"}
+              status={getCompletionStatus(completion, day, currentItem.id) ?? "Not done"}
               timer={getItemTimer(log, currentItem.id)}
               onOpenVideo={onOpenVideo}
               onToggleTimer={() => onToggleItemTimer(day, currentItem.id)}
-              onUpdateStatus={(status) => onUpdateExerciseStatus(currentItem.id, status)}
+              onUpdateStatus={(status) => onUpdateExerciseStatus(getCompletionKey(day, currentItem.id), status)}
             />
           ) : (
             <ExerciseCard
-              completionStatus={completion[currentItem.id] ?? "Not done"}
+              completionStatus={getCompletionStatus(completion, day, currentItem.id) ?? "Not done"}
               exercise={currentItem.exercise}
               key={currentItem.id}
               selectedOption={exerciseSelection[currentItem.id] ?? "main"}
@@ -3952,7 +4002,7 @@ function TodayWorkoutScreen({
               onOpenVideo={onOpenVideo}
               onToggleTimer={() => onToggleItemTimer(day, currentItem.id)}
               onUpdateSetLog={(setIndex, key, value) => onUpdateExerciseSetLog(day, currentItem.id, setIndex, key, value)}
-              onUpdateStatus={(status) => onUpdateExerciseStatus(currentItem.id, status)}
+              onUpdateStatus={(status) => onUpdateExerciseStatus(getCompletionKey(day, currentItem.id), status)}
             />
           )}
         </section>
@@ -4406,7 +4456,7 @@ function ProgressScreen({
   const partiallyStartedDay = getPartiallyStartedDay(plan, completion);
   const actionTargetDay = getProgressActionTargetDay(plan, completion);
   const actionTargetIndex = actionTargetDay && plan ? plan.days.findIndex((day) => day.day === actionTargetDay.day) : -1;
-  const performanceRows = getExercisePerformanceRows(plan, workoutLogs, exerciseSelection);
+  const performanceRows = getExercisePerformanceRows(plan, workoutLogs, exerciseSelection, completion);
 
   return (
     <section className="flex flex-1 flex-col gap-4 p-4 pb-20 pt-3 sm:gap-5 sm:p-5 sm:pt-4 sm:pb-24">
@@ -4478,7 +4528,7 @@ function ProgressScreen({
             const log = getWorkoutLog(workoutLogs, day);
             const summary = getWorkoutActivitySummary(day, log, completion);
             const isSelected = selectedProgressDayIndex === dayIndex;
-            const dayPerformanceRows = getDayExercisePerformanceRows(day, log, exerciseSelection);
+            const dayPerformanceRows = getDayExercisePerformanceRows(day, log, exerciseSelection, completion);
             return (
               <article className="rounded-3xl border border-[#334155] bg-[#1E293B] p-4" key={day.day}>
                 <button
