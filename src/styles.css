@@ -15,11 +15,11 @@
   --gb-muted: #64748b;
   --gb-muted-2: #7a8699;
   --gb-outline: #d8e0ec;
-  --gb-primary: #2f5be7;
-  --gb-primary-strong: #2f5be7;
+  --gb-primary: #3b6fe8;
+  --gb-primary-strong: #3b6fe8;
   --gb-on-primary: #f8f7ff;
-  --gb-lime: #2f5be7;
-  --gb-lime-text: #2f5be7;
+  --gb-lime: #3b6fe8;
+  --gb-lime-text: #3b6fe8;
   --gb-on-lime: #ffffff;
   --gb-success: #5f8f27;
   --gb-success-soft: #eef8e7;
@@ -135,7 +135,7 @@ button {
 }
 
 .gb-theme .bg-\[\#40B5AD\],
-.gb-theme .bg-\[\#0066FF\],
+.gb-theme .bg-\[\#3B6FE8\],
 .gb-theme .bg-\[\#3B82F6\],
 .gb-theme .bg-blue-500 {
   background-color: var(--gb-primary-strong) !important;
@@ -233,13 +233,13 @@ button {
   color: #ffffff !important;
 }
 
-.gb-theme .bg-\[\#0066FF\],
+.gb-theme .bg-\[\#3B6FE8\],
 .gb-theme .bg-\[\#3B82F6\],
 .gb-theme .bg-blue-500 {
   color: var(--gb-on-primary) !important;
 }
 
-.gb-theme .bg-\[\#0066FF\] *,
+.gb-theme .bg-\[\#3B6FE8\] *,
 .gb-theme .bg-\[\#3B82F6\] *,
 .gb-theme .bg-blue-500 * {
   color: var(--gb-on-primary) !important;

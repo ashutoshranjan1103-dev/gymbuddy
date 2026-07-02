@@ -3582,7 +3582,7 @@ function HomeStat({ label, value }: { label: string; value: string }) {
 
 function CircularProgress({ percent }: { percent: number }) {
   const safePercent = Math.min(100, Math.max(0, percent));
-  const ringColor = safePercent >= 100 ? "#22C55E" : "#2F5BE7";
+  const ringColor = safePercent >= 100 ? "#22C55E" : "#3B6FE8";
   return (
     <div
       className="grid h-40 w-40 place-items-center rounded-full"
@@ -3616,16 +3616,16 @@ function HomeProgressItem({
   value: string;
 }) {
   const toneClass = {
-    blue: "bg-[#EAF0FF] text-[#2F5BE7]",
+    blue: "bg-[#EAF0FF] text-[#3B6FE8]",
     orange: "bg-[#EEF8E7] text-[#5F8F27]",
     cyan: "bg-[#E8F7FF] text-[#2176A6]",
     green: "bg-[#EEF8E7] text-[#5F8F27]",
   }[tone];
   const barClass = {
-    blue: "bg-[#2F5BE7]",
-    orange: percent >= 100 ? "bg-[#22C55E]" : "bg-[#2F5BE7]",
-    cyan: "bg-[#2F5BE7]",
-    green: percent >= 100 ? "bg-[#22C55E]" : "bg-[#2F5BE7]",
+    blue: "bg-[#3B6FE8]",
+    orange: percent >= 100 ? "bg-[#22C55E]" : "bg-[#3B6FE8]",
+    cyan: "bg-[#3B6FE8]",
+    green: percent >= 100 ? "bg-[#22C55E]" : "bg-[#3B6FE8]",
   }[tone];
 
   const content = (
@@ -4161,7 +4161,7 @@ function ActivityCard({
           <p className="mt-1 text-sm font-semibold text-[#94A3B8]">{activity.paceOrLoad}</p>
         </div>
         <button
-          className="shrink-0 rounded-2xl bg-[#0066FF] px-3 py-2 text-xs font-black text-white"
+          className="shrink-0 rounded-2xl bg-[#3B6FE8] px-3 py-2 text-xs font-black text-white"
           onClick={() => onOpenVideo({ title: activity.name, url: demoLink })}
           type="button"
         >
@@ -4240,7 +4240,7 @@ function ExerciseCard({
           </div>
           <button
             aria-label={`Open demo for ${activeOption.name}`}
-            className="min-h-10 shrink-0 rounded-2xl bg-[#0066FF] px-4 text-xs font-black text-white"
+            className="min-h-10 shrink-0 rounded-2xl bg-[#3B6FE8] px-4 text-xs font-black text-white"
             onClick={() => onOpenVideo({ title: activeOption.name, url: activeDemoLink })}
             type="button"
           >
@@ -4368,7 +4368,7 @@ function StatusButtonGroup({
           status === "Done"
             ? "border-[#BBF7D0] bg-[#F0FDF4] text-[#166534]"
             : status === "Partially done"
-              ? "border-[#BFDBFE] bg-[#EFF6FF] text-[#2F5BE7]"
+              ? "border-[#BFDBFE] bg-[#EFF6FF] text-[#3B6FE8]"
               : "border-[#FECACA] bg-[#FEF2F2] text-[#DC2626]";
 
         return (
@@ -4402,7 +4402,7 @@ function ItemTimerControl({ timer, onToggle }: { timer: WorkoutSectionLog; onTog
         </div>
         <button
           aria-label={isRunning ? "Pause timer" : "Start timer"}
-          className={`grid h-10 w-10 place-items-center rounded-xl ${isRunning ? "bg-[#ABD600] text-[#283500]" : "bg-[#0066FF] text-white"}`}
+          className={`grid h-10 w-10 place-items-center rounded-xl ${isRunning ? "bg-[#ABD600] text-[#283500]" : "bg-[#3B6FE8] text-white"}`}
           onClick={onToggle}
           type="button"
         >
@@ -4428,7 +4428,7 @@ function MetricTile({ label, value }: { label: string; value: string }) {
 
 function ProgressBar({ percent, tone = "green" }: { percent: number; tone?: "green" | "cyan" | "orange" }) {
   const safePercent = Math.min(100, Math.max(0, percent));
-  const toneClass = safePercent >= 100 ? "bg-[#22C55E]" : "bg-[#2F5BE7]";
+  const toneClass = safePercent >= 100 ? "bg-[#22C55E]" : "bg-[#3B6FE8]";
   return (
     <div className="mt-2 h-3 overflow-hidden rounded-full bg-[#334155]">
       <div className={`h-full rounded-full ${toneClass} transition-all`} style={{ width: `${safePercent}%` }} />
@@ -4609,7 +4609,7 @@ function ExercisePerformancePanel({ rows }: { rows: ExercisePerformanceRow[] }) 
                   </p>
                 </div>
                 <div className="mt-3 h-2 overflow-hidden rounded-full bg-[#334155]">
-                  <div className={`h-full rounded-full ${percent >= 100 ? "bg-[#22C55E]" : "bg-[#2F5BE7]"}`} style={{ width: `${percent}%` }} />
+                  <div className={`h-full rounded-full ${percent >= 100 ? "bg-[#22C55E]" : "bg-[#3B6FE8]"}`} style={{ width: `${percent}%` }} />
                 </div>
                 <div className="mt-3 flex flex-wrap gap-2">
                   {row.sets.map((set, index) => (
@@ -4669,7 +4669,7 @@ function DayExerciseRecords({ rows }: { rows: ExercisePerformanceRow[] }) {
                         <p className="text-[10px] font-black text-[#94A3B8]">{set.duration ? "time" : "load"}</p>
                       </div>
                       <div className="mt-1 h-2 overflow-hidden rounded-full bg-[#333535]">
-                        <div className={`h-full rounded-full ${percent >= 100 ? "bg-[#22C55E]" : "bg-[#2F5BE7]"}`} style={{ width: `${percent}%` }} />
+                        <div className={`h-full rounded-full ${percent >= 100 ? "bg-[#22C55E]" : "bg-[#3B6FE8]"}`} style={{ width: `${percent}%` }} />
                       </div>
                     </div>
                   </div>
@@ -4694,7 +4694,7 @@ function ProgressNudgeCard({ actionLabel, message, onAction }: { actionLabel: st
       <p className="text-xs font-black uppercase tracking-wide text-[#ABD600]">Next</p>
       <p className="mt-2 text-xl font-black leading-tight text-white">{message}</p>
       <button
-        className="mt-4 flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl bg-[#0066FF] px-4 text-sm font-black text-white shadow-lg shadow-blue-950/25 transition active:scale-[0.98]"
+        className="mt-4 flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl bg-[#3B6FE8] px-4 text-sm font-black text-white shadow-lg shadow-blue-950/25 transition active:scale-[0.98]"
         onClick={onAction}
         type="button"
       >
@@ -4865,7 +4865,7 @@ function NutritionScreen({
 
       <section className="rounded-3xl border border-[#334155] bg-[#1E293B] p-4">
         <div className="flex items-center gap-3">
-          <div className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl bg-[#0066FF]/20 text-[#B3C5FF]">
+          <div className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl bg-[#3B6FE8]/20 text-[#B3C5FF]">
             <Droplet size={26} />
           </div>
           <div className="min-w-0 flex-1">
@@ -4937,7 +4937,7 @@ function NutritionScreen({
               <button
                 className={`min-h-11 shrink-0 rounded-full border px-4 text-sm font-black transition ${
                   isSelected
-                    ? "border-[#0066FF] bg-[#0066FF] text-white"
+                    ? "border-[#3B6FE8] bg-[#3B6FE8] text-white"
                     : "border-[#424656] bg-transparent text-[#CBD5E1]"
                 }`}
                 key={option}
@@ -4968,7 +4968,7 @@ function NutritionScreen({
               <button
                 className={`min-h-10 shrink-0 rounded-full border px-4 text-xs font-black transition ${
                   isSelected
-                    ? "border-[#2F5BE7] bg-[#2F5BE7] text-white"
+                    ? "border-[#3B6FE8] bg-[#3B6FE8] text-white"
                     : "border-[#D8E0EC] bg-white text-[#64748B]"
                 }`}
                 key={style}
@@ -5143,7 +5143,7 @@ function MacroRing({
   tone: "blue" | "lime" | "silver";
   value: string;
 }) {
-  const color = tone === "blue" ? "#2F5BE7" : tone === "lime" ? "#5F8F27" : "#64748B";
+  const color = tone === "blue" ? "#3B6FE8" : tone === "lime" ? "#5F8F27" : "#64748B";
   const safePercent = Math.min(100, Math.max(0, percent));
 
   return (
@@ -5288,7 +5288,7 @@ function ProfileScreen({
         <h2 className="mt-2 text-2xl font-black text-slate-950 sm:text-3xl">{profile.name || "Beginner Athlete"}</h2>
         <p className="mt-2 font-bold text-slate-600">{profile.goal} | {profile.experienceLevel}</p>
         <button
-          className="mt-4 min-h-11 rounded-2xl bg-[#0066FF] px-4 text-sm font-black text-white"
+          className="mt-4 min-h-11 rounded-2xl bg-[#3B6FE8] px-4 text-sm font-black text-white"
           onClick={() => setIsEditingProfile((current) => !current)}
           type="button"
         >
@@ -5465,7 +5465,7 @@ function BottomNav({
         const isActive = activeTab === item.id;
         return (
           <button
-            className={`flex min-h-[3.5rem] flex-col items-center justify-center gap-0.5 text-[10px] font-black sm:min-h-16 sm:gap-1 sm:text-[11px] ${index > 0 ? "border-l border-[#E5EAF3]" : ""} ${isActive ? "bg-[#EAF0FF] text-[#2F5BE7]" : "text-[#64748B]"}`}
+            className={`flex min-h-[3.5rem] flex-col items-center justify-center gap-0.5 text-[10px] font-black sm:min-h-16 sm:gap-1 sm:text-[11px] ${index > 0 ? "border-l border-[#E5EAF3]" : ""} ${isActive ? "bg-[#EAF0FF] text-[#3B6FE8]" : "text-[#64748B]"}`}
             key={item.id}
             onClick={() => onNavigate(item.id)}
             type="button"
