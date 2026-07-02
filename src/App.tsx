@@ -3582,11 +3582,12 @@ function HomeStat({ label, value }: { label: string; value: string }) {
 
 function CircularProgress({ percent }: { percent: number }) {
   const safePercent = Math.min(100, Math.max(0, percent));
+  const ringColor = safePercent >= 100 ? "#22C55E" : "#2F5BE7";
   return (
     <div
       className="grid h-40 w-40 place-items-center rounded-full"
       style={{
-        background: `conic-gradient(#A3E635 ${safePercent * 3.6}deg, #334155 0deg)`,
+        background: `conic-gradient(${ringColor} ${safePercent * 3.6}deg, #D8E0EC 0deg)`,
       }}
     >
       <div className="grid h-28 w-28 place-items-center rounded-full bg-[#111827] text-center">
@@ -3615,16 +3616,16 @@ function HomeProgressItem({
   value: string;
 }) {
   const toneClass = {
-    blue: "bg-[#3B82F6]/20 text-[#93C5FD]",
-    orange: "bg-[#F97316]/20 text-[#FDBA74]",
-    cyan: "bg-[#06B6D4]/20 text-[#67E8F9]",
-    green: "bg-[#22C55E]/20 text-[#86EFAC]",
+    blue: "bg-[#EAF0FF] text-[#2F5BE7]",
+    orange: "bg-[#EEF8E7] text-[#5F8F27]",
+    cyan: "bg-[#E8F7FF] text-[#2176A6]",
+    green: "bg-[#EEF8E7] text-[#5F8F27]",
   }[tone];
   const barClass = {
-    blue: "bg-[#3B82F6]",
-    orange: "bg-[#F97316]",
-    cyan: "bg-[#06B6D4]",
-    green: "bg-[#22C55E]",
+    blue: "bg-[#2F5BE7]",
+    orange: percent >= 100 ? "bg-[#22C55E]" : "bg-[#2F5BE7]",
+    cyan: "bg-[#2F5BE7]",
+    green: percent >= 100 ? "bg-[#22C55E]" : "bg-[#2F5BE7]",
   }[tone];
 
   const content = (
@@ -4007,10 +4008,10 @@ function TodayWorkoutScreen({
           )}
         </section>
       ) : (
-        <section className="rounded-3xl border border-[#22C55E]/40 bg-[#12251B] p-5 text-center">
-          <CheckCheck className="mx-auto text-[#86EFAC]" size={30} />
-          <h2 className="mt-3 text-2xl font-black text-white">Workout items complete</h2>
-          <p className="mt-2 text-sm font-bold leading-6 text-[#CBD5E1]">Do your check-in to save how the session felt</p>
+        <section className="rounded-3xl border border-[#BBF7D0] bg-[#F0FDF4] p-5 text-center">
+          <CheckCheck className="mx-auto text-[#16A34A]" size={30} />
+          <h2 className="mt-3 text-2xl font-black text-[#111827]">Workout items complete</h2>
+          <p className="mt-2 text-sm font-bold leading-6 text-[#64748B]">Do your check-in to save how the session felt</p>
         </section>
       )}
 
@@ -4359,16 +4360,16 @@ function StatusButtonGroup({
         const Icon = status === "Done" ? CheckCheck : status === "Partially done" ? Check : X;
         const selectedClass =
           status === "Done"
-            ? "border-[#22C55E] bg-[#22C55E] text-[#052E16]"
+            ? "border-[#22C55E] bg-[#22C55E] text-white"
             : status === "Partially done"
               ? "border-[#3B82F6] bg-[#3B82F6] text-white"
               : "border-[#EF4444] bg-[#EF4444] text-white";
         const idleClass =
           status === "Done"
-            ? "border-[#22C55E]/40 bg-[#12251B] text-[#86EFAC]"
+            ? "border-[#BBF7D0] bg-[#F0FDF4] text-[#166534]"
             : status === "Partially done"
-              ? "border-[#3B82F6]/40 bg-[#10213F] text-[#93C5FD]"
-              : "border-[#EF4444]/40 bg-[#2A1217] text-[#FCA5A5]";
+              ? "border-[#BFDBFE] bg-[#EFF6FF] text-[#2F5BE7]"
+              : "border-[#FECACA] bg-[#FEF2F2] text-[#DC2626]";
 
         return (
           <button
@@ -4426,10 +4427,11 @@ function MetricTile({ label, value }: { label: string; value: string }) {
 }
 
 function ProgressBar({ percent, tone = "green" }: { percent: number; tone?: "green" | "cyan" | "orange" }) {
-  const toneClass = tone === "cyan" ? "bg-[#06B6D4]" : tone === "orange" ? "bg-[#F97316]" : "bg-[#22C55E]";
+  const safePercent = Math.min(100, Math.max(0, percent));
+  const toneClass = safePercent >= 100 ? "bg-[#22C55E]" : "bg-[#2F5BE7]";
   return (
     <div className="mt-2 h-3 overflow-hidden rounded-full bg-[#334155]">
-      <div className={`h-full rounded-full ${toneClass} transition-all`} style={{ width: `${Math.min(100, Math.max(0, percent))}%` }} />
+      <div className={`h-full rounded-full ${toneClass} transition-all`} style={{ width: `${safePercent}%` }} />
     </div>
   );
 }
@@ -4607,7 +4609,7 @@ function ExercisePerformancePanel({ rows }: { rows: ExercisePerformanceRow[] }) 
                   </p>
                 </div>
                 <div className="mt-3 h-2 overflow-hidden rounded-full bg-[#334155]">
-                  <div className="h-full rounded-full bg-[#22C55E]" style={{ width: `${percent}%` }} />
+                  <div className={`h-full rounded-full ${percent >= 100 ? "bg-[#22C55E]" : "bg-[#2F5BE7]"}`} style={{ width: `${percent}%` }} />
                 </div>
                 <div className="mt-3 flex flex-wrap gap-2">
                   {row.sets.map((set, index) => (
@@ -4667,7 +4669,7 @@ function DayExerciseRecords({ rows }: { rows: ExercisePerformanceRow[] }) {
                         <p className="text-[10px] font-black text-[#94A3B8]">{set.duration ? "time" : "load"}</p>
                       </div>
                       <div className="mt-1 h-2 overflow-hidden rounded-full bg-[#333535]">
-                        <div className="h-full rounded-full bg-[#ABD600]" style={{ width: `${percent}%` }} />
+                        <div className={`h-full rounded-full ${percent >= 100 ? "bg-[#22C55E]" : "bg-[#2F5BE7]"}`} style={{ width: `${percent}%` }} />
                       </div>
                     </div>
                   </div>
@@ -4966,8 +4968,8 @@ function NutritionScreen({
               <button
                 className={`min-h-10 shrink-0 rounded-full border px-4 text-xs font-black transition ${
                   isSelected
-                    ? "border-[#ABD600] bg-[#ABD600] text-[#283500]"
-                    : "border-[#424656] bg-[#282A2B] text-[#CBD5E1]"
+                    ? "border-[#2F5BE7] bg-[#2F5BE7] text-white"
+                    : "border-[#D8E0EC] bg-white text-[#64748B]"
                 }`}
                 key={style}
                 onClick={() => setSelectedMealStyle(style)}
@@ -5141,14 +5143,14 @@ function MacroRing({
   tone: "blue" | "lime" | "silver";
   value: string;
 }) {
-  const color = tone === "blue" ? "#B3C5FF" : tone === "lime" ? "#ABD600" : "#E2E2E2";
+  const color = tone === "blue" ? "#2F5BE7" : tone === "lime" ? "#5F8F27" : "#64748B";
   const safePercent = Math.min(100, Math.max(0, percent));
 
   return (
     <div className="grid justify-items-center gap-2 text-center">
       <div
         className="grid h-[86px] w-[86px] place-items-center rounded-full"
-        style={{ background: `conic-gradient(${color} ${safePercent * 3.6}deg, #333535 0deg)` }}
+        style={{ background: `conic-gradient(${color} ${safePercent * 3.6}deg, #D8E0EC 0deg)` }}
       >
         <div className="grid h-[62px] w-[62px] place-items-center rounded-full bg-[#121414]">
           <p className="text-lg font-black text-white">{safePercent}%</p>
@@ -5156,7 +5158,7 @@ function MacroRing({
       </div>
       <div>
         <p className="text-sm font-bold text-[#CBD5E1]">{label}</p>
-        <p className={`text-lg font-black ${tone === "lime" ? "text-[#ABD600]" : tone === "blue" ? "text-[#B3C5FF]" : "text-white"}`}>{value}</p>
+        <p className={`text-lg font-black ${tone === "lime" ? "text-[#22C55E]" : tone === "blue" ? "text-[#3B82F6]" : "text-white"}`}>{value}</p>
       </div>
     </div>
   );
@@ -5457,13 +5459,13 @@ function BottomNav({
   ];
 
   return (
-    <nav className="fixed bottom-0 left-1/2 z-40 grid w-full max-w-md -translate-x-1/2 grid-cols-4 border-t border-[#334155] bg-[#0F172A]/95 pb-[env(safe-area-inset-bottom)] shadow-[0_-12px_30px_rgba(0,0,0,0.28)] backdrop-blur sm:bottom-5 sm:rounded-b-[2rem] sm:border-x">
+    <nav className="fixed bottom-0 left-1/2 z-40 grid w-full max-w-md -translate-x-1/2 grid-cols-4 border-t border-[#D8E0EC] bg-white/95 pb-[env(safe-area-inset-bottom)] shadow-[0_-10px_28px_rgba(47,91,231,0.12)] backdrop-blur sm:bottom-5 sm:rounded-b-[2rem] sm:border-x">
       {items.map((item, index) => {
         const Icon = item.icon;
         const isActive = activeTab === item.id;
         return (
           <button
-            className={`flex min-h-[3.5rem] flex-col items-center justify-center gap-0.5 text-[10px] font-black sm:min-h-16 sm:gap-1 sm:text-[11px] ${index > 0 ? "border-l border-[#1E293B]" : ""} ${isActive ? "bg-[#1E293B] text-[#F97316]" : "text-[#CBD5E1]"}`}
+            className={`flex min-h-[3.5rem] flex-col items-center justify-center gap-0.5 text-[10px] font-black sm:min-h-16 sm:gap-1 sm:text-[11px] ${index > 0 ? "border-l border-[#E5EAF3]" : ""} ${isActive ? "bg-[#EAF0FF] text-[#2F5BE7]" : "text-[#64748B]"}`}
             key={item.id}
             onClick={() => onNavigate(item.id)}
             type="button"

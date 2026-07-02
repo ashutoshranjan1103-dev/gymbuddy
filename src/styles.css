@@ -5,22 +5,26 @@
 @tailwind utilities;
 
 :root {
-  --gb-bg: #121414;
-  --gb-bg-deep: #0c0f0f;
-  --gb-surface-low: #1a1c1c;
-  --gb-surface: #1e2020;
-  --gb-surface-high: #282a2b;
-  --gb-surface-highest: #333535;
-  --gb-text: #e2e2e2;
-  --gb-muted: #c2c6d8;
-  --gb-muted-2: #8c90a1;
-  --gb-outline: #424656;
-  --gb-primary: #b3c5ff;
-  --gb-primary-strong: #0066ff;
+  --gb-bg: #f5f7fb;
+  --gb-bg-deep: #eef3f9;
+  --gb-surface-low: #f8fafc;
+  --gb-surface: #ffffff;
+  --gb-surface-high: #f1f5f9;
+  --gb-surface-highest: #e2e8f0;
+  --gb-text: #111827;
+  --gb-muted: #64748b;
+  --gb-muted-2: #7a8699;
+  --gb-outline: #d8e0ec;
+  --gb-primary: #2f5be7;
+  --gb-primary-strong: #2f5be7;
   --gb-on-primary: #f8f7ff;
-  --gb-lime: #abd600;
-  --gb-on-lime: #283500;
-  --gb-error: #ffb4ab;
+  --gb-lime: #2f5be7;
+  --gb-lime-text: #2f5be7;
+  --gb-on-lime: #ffffff;
+  --gb-success: #5f8f27;
+  --gb-success-soft: #eef8e7;
+  --gb-success-text: #42651b;
+  --gb-error: #dc2626;
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   color: var(--gb-text);
@@ -62,7 +66,7 @@ button {
 
 .gb-theme {
   background:
-    radial-gradient(circle at top left, rgba(179, 197, 255, 0.08), transparent 32rem),
+    radial-gradient(circle at top left, rgba(0, 102, 255, 0.12), transparent 32rem),
     linear-gradient(180deg, var(--gb-bg) 0%, var(--gb-bg-deep) 100%);
   color: var(--gb-text);
 }
@@ -88,12 +92,13 @@ button {
 
 .gb-theme .bg-\[\#0F172A\],
 .gb-theme .bg-\[\#111827\],
+.gb-theme .bg-\[\#121414\],
 .gb-theme .bg-slate-950 {
-  background-color: var(--gb-bg-deep) !important;
+  background-color: var(--gb-bg) !important;
 }
 
 .gb-theme .bg-\[\#0F172A\]\/95 {
-  background-color: rgba(12, 15, 15, 0.95) !important;
+  background-color: rgba(248, 250, 252, 0.95) !important;
 }
 
 .gb-theme .bg-white,
@@ -117,11 +122,11 @@ button {
 }
 
 .gb-theme .bg-\[\#273449\]\/60 {
-  background-color: rgba(40, 42, 43, 0.6) !important;
+  background-color: rgba(238, 242, 247, 0.72) !important;
 }
 
 .gb-theme .bg-\[\#273449\]\/85 {
-  background-color: rgba(40, 42, 43, 0.85) !important;
+  background-color: rgba(238, 242, 247, 0.9) !important;
 }
 
 .gb-theme .bg-\[\#334155\],
@@ -130,12 +135,14 @@ button {
 }
 
 .gb-theme .bg-\[\#40B5AD\],
+.gb-theme .bg-\[\#0066FF\],
 .gb-theme .bg-\[\#3B82F6\],
 .gb-theme .bg-blue-500 {
   background-color: var(--gb-primary-strong) !important;
 }
 
 .gb-theme .bg-\[\#9EDCD8\],
+.gb-theme .bg-\[\#ABD600\],
 .gb-theme .bg-\[\#F97316\],
 .gb-theme .bg-orange-500 {
   background-color: var(--gb-lime) !important;
@@ -144,7 +151,7 @@ button {
 .gb-theme .bg-\[\#22C55E\],
 .gb-theme .bg-emerald-500,
 .gb-theme .bg-green-500 {
-  background-color: var(--gb-lime) !important;
+  background-color: var(--gb-success) !important;
 }
 
 .gb-theme .text-slate-950,
@@ -172,14 +179,16 @@ button {
 .gb-theme .text-teal-900,
 .gb-theme .text-teal-800,
 .gb-theme .text-teal-700,
+.gb-theme .text-\[\#ABD600\],
 .gb-theme .text-\[\#FB923C\],
 .gb-theme .text-\[\#F97316\],
 .gb-theme .text-orange-500 {
-  color: var(--gb-lime) !important;
+  color: var(--gb-lime-text) !important;
 }
 
 .gb-theme .text-\[\#3B82F6\],
 .gb-theme .text-blue-500,
+.gb-theme .text-\[\#B3C5FF\],
 .gb-theme .text-\[\#93C5FD\] {
   color: var(--gb-primary) !important;
 }
@@ -187,7 +196,7 @@ button {
 .gb-theme .text-\[\#22C55E\],
 .gb-theme .text-emerald-500,
 .gb-theme .text-\[\#86EFAC\] {
-  color: var(--gb-lime) !important;
+  color: var(--gb-success-text) !important;
 }
 
 .gb-theme .text-\[\#FDBA74\],
@@ -202,20 +211,63 @@ button {
 
 .gb-theme .bg-\[\#ABD600\],
 .gb-theme .bg-\[\#F97316\],
-.gb-theme .bg-\[\#22C55E\],
-.gb-theme .bg-orange-500,
-.gb-theme .bg-green-500,
-.gb-theme .bg-emerald-500 {
+.gb-theme .bg-orange-500 {
   color: var(--gb-on-lime) !important;
 }
 
 .gb-theme .bg-\[\#ABD600\] *,
 .gb-theme .bg-\[\#F97316\] *,
+.gb-theme .bg-orange-500 * {
+  color: var(--gb-on-lime) !important;
+}
+
+.gb-theme .bg-\[\#22C55E\],
+.gb-theme .bg-green-500,
+.gb-theme .bg-emerald-500 {
+  color: #ffffff !important;
+}
+
 .gb-theme .bg-\[\#22C55E\] *,
-.gb-theme .bg-orange-500 *,
 .gb-theme .bg-green-500 *,
 .gb-theme .bg-emerald-500 * {
-  color: var(--gb-on-lime) !important;
+  color: #ffffff !important;
+}
+
+.gb-theme .bg-\[\#0066FF\],
+.gb-theme .bg-\[\#3B82F6\],
+.gb-theme .bg-blue-500 {
+  color: var(--gb-on-primary) !important;
+}
+
+.gb-theme .bg-\[\#0066FF\] *,
+.gb-theme .bg-\[\#3B82F6\] *,
+.gb-theme .bg-blue-500 * {
+  color: var(--gb-on-primary) !important;
+}
+
+.gb-theme .bg-\[\#EF4444\],
+.gb-theme .bg-red-500 {
+  color: #ffffff !important;
+}
+
+.gb-theme .bg-\[\#EF4444\] *,
+.gb-theme .bg-red-500 * {
+  color: #ffffff !important;
+}
+
+.gb-theme [style*="background-image"] {
+  color: #ffffff !important;
+}
+
+.gb-theme [style*="background-image"] .text-white,
+.gb-theme [style*="background-image"] .text-\[\#FFFFFF\] {
+  color: #ffffff !important;
+}
+
+.gb-theme [style*="background-image"] .text-\[\#CBD5E1\],
+.gb-theme [style*="background-image"] .text-\[\#94A3B8\],
+.gb-theme [style*="background-image"] .text-\[\#64748B\] {
+  color: #e2e8f0 !important;
 }
 
 .gb-theme .border-white\/80,
@@ -231,7 +283,7 @@ button {
 .gb-theme input,
 .gb-theme select,
 .gb-theme textarea {
-  background-color: var(--gb-bg-deep) !important;
+  background-color: var(--gb-surface-high) !important;
   border-color: var(--gb-outline) !important;
   color: var(--gb-text) !important;
 }
@@ -255,7 +307,7 @@ button {
 .gb-theme .shadow-black\/15,
 .gb-theme .shadow-black\/20,
 .gb-theme .shadow-black\/25 {
-  --tw-shadow-color: rgba(0, 0, 0, 0.18) !important;
+  --tw-shadow-color: rgba(0, 102, 255, 0.14) !important;
 }
 
 .gb-theme .focus\:border-\[\#2F9F98\]:focus,
@@ -266,7 +318,7 @@ button {
 
 .gb-theme .focus\:ring-teal-100:focus,
 .gb-theme .focus-within\:ring-teal-100:focus-within {
-  --tw-ring-color: rgba(179, 197, 255, 0.2) !important;
+  --tw-ring-color: rgba(0, 102, 255, 0.18) !important;
 }
 
 .gb-theme .backdrop-blur,
@@ -287,7 +339,7 @@ button {
 }
 
 .gb-theme .bg-gradient-to-br {
-  background-image: linear-gradient(135deg, rgba(30, 32, 32, 0.92), rgba(12, 15, 15, 0.96)) !important;
+  background-image: linear-gradient(135deg, rgba(255, 255, 255, 0.96), rgba(238, 242, 247, 0.98)) !important;
 }
 
 .gb-theme .border {
