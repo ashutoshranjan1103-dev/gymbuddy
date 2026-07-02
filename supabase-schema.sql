@@ -6,6 +6,8 @@ create table if not exists public.user_app_state (
   exercise_selection jsonb default '{}'::jsonb,
   check_in jsonb default '{}'::jsonb,
   nutrition_plan jsonb,
+  water_intake jsonb default '{}'::jsonb,
+  protein_intake jsonb default '{}'::jsonb,
   weight_log jsonb default '[]'::jsonb,
   workout_logs jsonb default '{}'::jsonb,
   adapted_plan text default '',
@@ -16,6 +18,12 @@ create table if not exists public.user_app_state (
 
 alter table public.user_app_state
 add column if not exists nutrition_plan jsonb;
+
+alter table public.user_app_state
+add column if not exists water_intake jsonb default '{}'::jsonb;
+
+alter table public.user_app_state
+add column if not exists protein_intake jsonb default '{}'::jsonb;
 
 alter table public.user_app_state
 add column if not exists weight_log jsonb default '[]'::jsonb;

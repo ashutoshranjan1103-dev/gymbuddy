@@ -206,6 +206,10 @@ type ExercisePerformanceRow = {
   volume: number;
 };
 
+type WorkoutQueueItem =
+  | { id: string; section: "Warm-up" | "Cooldown"; kind: "activity"; activity: PlanActivity }
+  | { id: string; section: "Exercise"; kind: "exercise"; exercise: Exercise };
+
 type CalendarDayProgress = {
   dayNumber: number;
   title: string;
@@ -248,6 +252,8 @@ type RemoteAppState = {
   exercise_selection: ExerciseSelection | null;
   check_in: WorkoutCheckIn | null;
   nutrition_plan: NutritionPlan | null;
+  water_intake: Record<string, number> | null;
+  protein_intake: Record<string, number> | null;
   weight_log: WeightLogEntry[] | null;
   workout_logs: WorkoutLogs | null;
   adapted_plan: string | null;
@@ -278,6 +284,7 @@ const STORAGE_KEYS = {
   nutritionSource: "gymbuddy:nutrition-source",
   nutritionError: "gymbuddy:nutrition-error",
   waterIntake: "gymbuddy:water-intake",
+  proteinIntake: "gymbuddy:protein-intake",
   weightLog: "gymbuddy:weekly-weight-log",
   workoutLogs: "gymbuddy:workout-logs",
 };
@@ -554,17 +561,30 @@ function isAlphabetName(value: string) {
   return /^[A-Za-z]+(?:\s+[A-Za-z]+)*$/.test(value.trim());
 }
 
-function isNumberInRange(value: string, min: number, max: number) {
+function hasAllowedDecimalPlaces(value: string, maxDecimalPlaces: number) {
+  const trimmedValue = value.trim();
+  if (!trimmedValue) return false;
+  const decimalPart = trimmedValue.split(".")[1];
+  return !decimalPart || decimalPart.length <= maxDecimalPlaces;
+}
+
+function isNumberInRange(value: string, min: number, max: number, maxDecimalPlaces?: number) {
   const number = Number(value);
-  return Number.isFinite(number) && number >= min && number <= max;
+  if (!Number.isFinite(number) || number < min || number > max) return false;
+  return maxDecimalPlaces === undefined || hasAllowedDecimalPlaces(value, maxDecimalPlaces);
+}
+
+function isWholeNumberInRange(value: string, min: number, max: number) {
+  const number = Number(value);
+  return Number.isInteger(number) && number >= min && number <= max;
 }
 
 function getOnboardingFieldErrors(profile: UserProfile) {
   return {
     name: isAlphabetName(profile.name) ? "" : "Enter your name using alphabet letters only.",
-    age: isNumberInRange(profile.age, VALUE_RULES.age.min, VALUE_RULES.age.max) ? "" : "Enter age from 16 to 60.",
-    height: isNumberInRange(profile.height, VALUE_RULES.height.min, VALUE_RULES.height.max) ? "" : "Enter height from 135 to 215 cm.",
-    weight: isNumberInRange(profile.weight, VALUE_RULES.weight.min, VALUE_RULES.weight.max) ? "" : "Enter weight from 30 to 150 kg.",
+    age: isWholeNumberInRange(profile.age, VALUE_RULES.age.min, VALUE_RULES.age.max) ? "" : "Enter age from 16 to 60.",
+    height: isNumberInRange(profile.height, VALUE_RULES.height.min, VALUE_RULES.height.max, 2) ? "" : "Enter height from 135 to 215 cm, up to 2 decimals.",
+    weight: isNumberInRange(profile.weight, VALUE_RULES.weight.min, VALUE_RULES.weight.max, 2) ? "" : "Enter weight from 30 to 150 kg, up to 2 decimals.",
   };
 }
 
@@ -576,8 +596,8 @@ function calculateBmi(heightCm: string, weightKg: string) {
   const height = Number(heightCm);
   const weight = Number(weightKg);
   if (
-    !isNumberInRange(heightCm, VALUE_RULES.height.min, VALUE_RULES.height.max) ||
-    !isNumberInRange(weightKg, VALUE_RULES.weight.min, VALUE_RULES.weight.max)
+    !isNumberInRange(heightCm, VALUE_RULES.height.min, VALUE_RULES.height.max, 2) ||
+    !isNumberInRange(weightKg, VALUE_RULES.weight.min, VALUE_RULES.weight.max, 2)
   ) {
     return null;
   }
@@ -1498,6 +1518,14 @@ function getWorkoutActivitySummary(day: DayPlan | null, log: DailyWorkoutLog, co
   };
 }
 
+function getWorkoutQueue(day: DayPlan): WorkoutQueueItem[] {
+  return [
+    ...day.warmUp.map((activity) => ({ id: activity.id, section: "Warm-up" as const, kind: "activity" as const, activity })),
+    ...day.exercises.map((exercise) => ({ id: exercise.id, section: "Exercise" as const, kind: "exercise" as const, exercise })),
+    ...day.coolDown.map((activity) => ({ id: activity.id, section: "Cooldown" as const, kind: "activity" as const, activity })),
+  ];
+}
+
 function getItemTimer(log: DailyWorkoutLog, itemId: string) {
   return log.itemTimers[itemId] ?? createEmptySectionLog();
 }
@@ -1757,6 +1785,8 @@ function App() {
   const [isNutritionLoading, setIsNutritionLoading] = useState(false);
   const [weightLog, setWeightLog] = useState<WeightLogEntry[]>(() => readStorage<WeightLogEntry[]>(STORAGE_KEYS.weightLog, []));
   const [workoutLogs, setWorkoutLogs] = useState<WorkoutLogs>(() => readStorage<WorkoutLogs>(STORAGE_KEYS.workoutLogs, {}));
+  const [waterLog, setWaterLog] = useState<Record<string, number>>(() => readStorage<Record<string, number>>(STORAGE_KEYS.waterIntake, {}));
+  const [proteinLog, setProteinLog] = useState<Record<string, number>>(() => readStorage<Record<string, number>>(STORAGE_KEYS.proteinIntake, {}));
   const [notificationPermission, setNotificationPermission] = useState<ReminderPermission>(() => getNotificationPermission());
   const [smartNotificationsEnabled, setSmartNotificationsEnabled] = useState(() => readStorage(STORAGE_KEYS.smartNotifications, false));
   const [headerToast, setHeaderToast] = useState("");
@@ -1829,6 +1859,8 @@ function App() {
           exercise_selection: exerciseSelection,
           check_in: checkIn,
           nutrition_plan: nutritionPlan,
+          water_intake: waterLog,
+          protein_intake: proteinLog,
           weight_log: weightLog,
           workout_logs: workoutLogs,
           adapted_plan: adaptedPlan,
@@ -1850,7 +1882,7 @@ function App() {
         return false;
       }
     },
-    [adaptedPlan, checkIn, completion, exerciseSelection, nutritionPlan, profile, session?.user.id, weeklyPlan, weightLog, workoutLogs],
+    [adaptedPlan, checkIn, completion, exerciseSelection, nutritionPlan, profile, proteinLog, session?.user.id, waterLog, weeklyPlan, weightLog, workoutLogs],
   );
 
   const loadCloudState = useCallback(
@@ -1899,6 +1931,16 @@ function App() {
         if (remote?.nutrition_plan) {
           setNutritionPlan(remote.nutrition_plan);
           writeStorage(STORAGE_KEYS.nutritionPlan, remote.nutrition_plan);
+        }
+
+        if (remote?.water_intake) {
+          setWaterLog(remote.water_intake);
+          writeStorage(STORAGE_KEYS.waterIntake, remote.water_intake);
+        }
+
+        if (remote?.protein_intake) {
+          setProteinLog(remote.protein_intake);
+          writeStorage(STORAGE_KEYS.proteinIntake, remote.protein_intake);
         }
 
         if (remote?.weight_log) {
@@ -2010,6 +2052,26 @@ function App() {
     setProfile((current) => ({ ...current, [key]: value }));
   }
 
+  function logWaterIntake(ml: number) {
+    const todayKey = getLocalDateKey();
+    const nutritionProfile = getProfileWithLoggedWeight(profile, weightLog);
+    const waterGoal = nutritionPlan?.macros?.waterLiters ?? getDailyWaterToDrinkLiters(nutritionProfile);
+    const currentAmount = Number(waterLog[todayKey] ?? 0);
+    const nextAmount = Number(Math.min(waterGoal, currentAmount + ml / 1000).toFixed(2));
+    const nextLog = { ...waterLog, [todayKey]: nextAmount };
+    setWaterLog(nextLog);
+    writeStorage(STORAGE_KEYS.waterIntake, nextLog);
+  }
+
+  function logProteinIntake(grams: number) {
+    const todayKey = getLocalDateKey();
+    const currentAmount = Number(proteinLog[todayKey] ?? 0);
+    const nextAmount = Math.max(0, Math.round(currentAmount + grams));
+    const nextLog = { ...proteinLog, [todayKey]: nextAmount };
+    setProteinLog(nextLog);
+    writeStorage(STORAGE_KEYS.proteinIntake, nextLog);
+  }
+
   async function refreshNutritionPlan(nextProfile = profile, forceRefresh = false, nutritionWeightLog = weightLog) {
     const nutritionProfile = getProfileWithLoggedWeight(nextProfile, nutritionWeightLog);
     const finalProfile = {
@@ -2080,9 +2142,9 @@ function App() {
 
   function handleWeeklyWeightLog(weightKg: string) {
     const numericWeight = Number(weightKg);
-    if (!isNumberInRange(weightKg, VALUE_RULES.weight.min, VALUE_RULES.weight.max)) return false;
+    if (!isNumberInRange(weightKg, VALUE_RULES.weight.min, VALUE_RULES.weight.max, 2)) return false;
 
-    const cleanWeight = Number(numericWeight.toFixed(1));
+    const cleanWeight = Number(numericWeight.toFixed(2));
     const nextBmi = calculateBmi(profile.height, String(cleanWeight));
     const nextProfile = {
       ...profile,
@@ -2118,9 +2180,9 @@ function App() {
   }
 
   function applyLoggedBodyWeight(weightValue: string) {
-    if (!isNumberInRange(weightValue, VALUE_RULES.weight.min, VALUE_RULES.weight.max)) return;
+    if (!isNumberInRange(weightValue, VALUE_RULES.weight.min, VALUE_RULES.weight.max, 2)) return;
 
-    const cleanWeight = Number(Number(weightValue).toFixed(1));
+    const cleanWeight = Number(Number(weightValue).toFixed(2));
     const nextBmi = calculateBmi(profile.height, String(cleanWeight));
     const nextProfile = {
       ...profile,
@@ -2152,37 +2214,56 @@ function App() {
   }
 
   function toggleWorkoutItemTimer(day: DayPlan, itemId: string) {
-    updateWorkoutLog(day, (current) => {
-      const timer = getItemTimer(current, itemId);
+    setWorkoutLogs((currentLogs) => {
       const now = new Date().toISOString();
+      const nowTime = new Date(now).getTime();
+      const dayLog = getWorkoutLog(currentLogs, day, profile.weight);
+      const timer = getItemTimer(dayLog, itemId);
+      const wasRunning = Boolean(timer.runningSince);
 
-      if (timer.runningSince) {
-        return {
-          ...current,
-          itemTimers: {
-            ...current.itemTimers,
-            [itemId]: {
-              ...timer,
-              stoppedAt: now,
-              elapsedSeconds: getSectionElapsedSeconds(timer, new Date(now).getTime()),
-              runningSince: "",
-            },
+      const pausedLogs = Object.fromEntries(
+        Object.entries({ ...currentLogs, [day.day]: dayLog }).map(([dayKey, savedLog]) => [
+          dayKey,
+          {
+            ...savedLog,
+            itemTimers: Object.fromEntries(
+              Object.entries(savedLog.itemTimers ?? {}).map(([timerItemId, itemTimer]) => [
+                timerItemId,
+                itemTimer.runningSince
+                  ? {
+                      ...itemTimer,
+                      stoppedAt: now,
+                      elapsedSeconds: getSectionElapsedSeconds(itemTimer, nowTime),
+                      runningSince: "",
+                    }
+                  : itemTimer,
+              ]),
+            ),
           },
-        };
-      }
+        ]),
+      );
 
-      return {
-        ...current,
-        itemTimers: {
-          ...current.itemTimers,
-          [itemId]: {
-            ...timer,
-            startedAt: timer.startedAt || now,
-            stoppedAt: "",
-            runningSince: now,
+      const nextDayLog = pausedLogs[day.day];
+      const nextLogs = {
+        ...pausedLogs,
+        [day.day]: {
+          ...nextDayLog,
+          itemTimers: {
+            ...nextDayLog.itemTimers,
+            [itemId]: wasRunning
+              ? getItemTimer(nextDayLog, itemId)
+              : {
+                  ...getItemTimer(nextDayLog, itemId),
+                  startedAt: timer.startedAt || now,
+                  stoppedAt: "",
+                  runningSince: now,
+                },
           },
         },
       };
+
+      writeStorage(STORAGE_KEYS.workoutLogs, nextLogs);
+      return nextLogs;
     });
   }
 
@@ -2266,7 +2347,7 @@ function App() {
     }
 
     setSyncStatus("saved");
-    setSyncMessage(mode === "sign-up" ? "Account created. Your plan can now sync online." : "Signed in. Your plan can now sync online.");
+    setSyncMessage(mode === "sign-up" ? "Signed up successfully" : "Signed in. Your plan can now sync online.");
     return true;
   }
 
@@ -2420,6 +2501,38 @@ function App() {
     const nextMonthlyProgress = upsertMonthlyProgress(monthlyProgress, weeklyPlan, next);
     setMonthlyProgress(nextMonthlyProgress);
     writeStorage(STORAGE_KEYS.monthlyProgress, nextMonthlyProgress);
+
+    if (status === "Done") {
+      const now = new Date().toISOString();
+      const nowTime = new Date(now).getTime();
+      setWorkoutLogs((current) => {
+        let changed = false;
+        const nextLogs = Object.fromEntries(
+          Object.entries(current).map(([dayKey, dayLog]) => {
+            const timer = dayLog.itemTimers[id];
+            if (!timer?.runningSince) return [dayKey, dayLog];
+            changed = true;
+            return [
+              dayKey,
+              {
+                ...dayLog,
+                itemTimers: {
+                  ...dayLog.itemTimers,
+                  [id]: {
+                    ...timer,
+                    stoppedAt: now,
+                    elapsedSeconds: getSectionElapsedSeconds(timer, nowTime),
+                    runningSince: "",
+                  },
+                },
+              },
+            ];
+          }),
+        );
+        if (changed) writeStorage(STORAGE_KEYS.workoutLogs, nextLogs);
+        return changed ? nextLogs : current;
+      });
+    }
   }
 
   function chooseExerciseOption(id: string, selectedOption: "main" | "alternative") {
@@ -2524,8 +2637,10 @@ function App() {
             completion={completion}
             nutritionPlan={nutritionPlan}
             plan={weeklyPlan}
+            proteinLog={proteinLog}
             profile={profile}
             resumeDayIndex={resumeDayIndex}
+            waterLog={waterLog}
             onOpenExercise={() => navigateMainTab("exercise")}
             onOpenNutrition={() => navigateMainTab("nutrition")}
             onOpenProgress={() => navigateMainTab("progress")}
@@ -2585,8 +2700,12 @@ function App() {
           <NutritionScreen
             isLoading={isNutritionLoading}
             nutritionPlan={nutritionPlan}
+            proteinLog={proteinLog}
             profile={profile}
+            waterLog={waterLog}
             onDietPreferenceChange={handleDietPreferenceChange}
+            onLogProtein={logProteinIntake}
+            onLogWater={logWaterIntake}
           />
         )}
         {screen === "progress" && (
@@ -2816,20 +2935,22 @@ function OnboardingScreen({
               <div className="grid grid-cols-2 gap-3">
                 <NumberField
                   error={fieldErrors.height}
-                  helper="135 to 215 cm"
+                  helper="135 to 215 cm, up to 2 decimals"
                   label="Height"
                   max={VALUE_RULES.height.max}
                   min={VALUE_RULES.height.min}
+                  step="0.01"
                   suffix="cm"
                   value={profile.height}
                   onChange={(value) => updateProfile("height", value)}
                 />
                 <NumberField
                   error={fieldErrors.weight}
-                  helper="30 to 150 kg"
+                  helper="30 to 150 kg, up to 2 decimals"
                   label="Weight"
                   max={VALUE_RULES.weight.max}
                   min={VALUE_RULES.weight.min}
+                  step="0.01"
                   suffix="kg"
                   value={profile.weight}
                   onChange={(value) => updateProfile("weight", value)}
@@ -3101,21 +3222,34 @@ function PasswordBackupForm({
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [mode, setMode] = useState<AuthMode>("sign-up");
+  const [signedUpSuccessfully, setSignedUpSuccessfully] = useState(false);
+
+  async function handleAuthSubmit() {
+    const success = await onAuth(email, password, mode);
+    if (success && mode === "sign-up") {
+      setSignedUpSuccessfully(true);
+      setMode("sign-in");
+      setPassword("");
+    }
+  }
 
   return (
     <div className="grid gap-3 rounded-3xl border border-[#334155] bg-[#1E293B] p-4">
       <div>
-        <p className="text-sm font-black text-white">{mode === "sign-up" ? "Create account" : "Sign in"}</p>
+        <p className="text-sm font-black text-white">{signedUpSuccessfully ? "Sign in" : mode === "sign-up" ? "Create account" : "Sign in"}</p>
         <p className="mt-1 text-sm font-semibold text-[#CBD5E1]">Email + password</p>
       </div>
-      <div className="grid grid-cols-2 gap-2 rounded-2xl bg-[#0F172A] p-1">
-        <button className={`min-h-10 rounded-xl text-sm font-black ${mode === "sign-up" ? "bg-[#3B82F6] text-white" : "text-[#CBD5E1]"}`} onClick={() => setMode("sign-up")} type="button">
-          Create
-        </button>
-        <button className={`min-h-10 rounded-xl text-sm font-black ${mode === "sign-in" ? "bg-[#3B82F6] text-white" : "text-[#CBD5E1]"}`} onClick={() => setMode("sign-in")} type="button">
-          Sign in
-        </button>
-      </div>
+      {signedUpSuccessfully && <p className="rounded-2xl bg-[#22C55E]/15 px-4 py-3 text-sm font-black text-[#86EFAC]">Signed up successfully</p>}
+      {!signedUpSuccessfully && (
+        <div className="grid grid-cols-2 gap-2 rounded-2xl bg-[#0F172A] p-1">
+          <button className={`min-h-10 rounded-xl text-sm font-black ${mode === "sign-up" ? "bg-[#3B82F6] text-white" : "text-[#CBD5E1]"}`} onClick={() => setMode("sign-up")} type="button">
+            Create
+          </button>
+          <button className={`min-h-10 rounded-xl text-sm font-black ${mode === "sign-in" ? "bg-[#3B82F6] text-white" : "text-[#CBD5E1]"}`} onClick={() => setMode("sign-in")} type="button">
+            Sign in
+          </button>
+        </div>
+      )}
       <input
         className="min-h-12 rounded-2xl border border-[#334155] bg-[#0F172A] px-4 font-semibold text-white outline-none placeholder:text-slate-500 focus:border-[#3B82F6]"
         inputMode="email"
@@ -3135,7 +3269,7 @@ function PasswordBackupForm({
       <button
         className="flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-[#3B82F6] px-4 text-sm font-black text-white disabled:opacity-60"
         disabled={disabled}
-        onClick={() => void onAuth(email, password, mode)}
+        onClick={() => void handleAuthSubmit()}
         type="button"
       >
         <Mail size={18} />
@@ -3249,8 +3383,10 @@ function HomeScreen({
   completion,
   nutritionPlan,
   plan,
+  proteinLog,
   profile,
   resumeDayIndex,
+  waterLog,
   onOpenExercise,
   onOpenNutrition,
   onOpenProgress,
@@ -3260,8 +3396,10 @@ function HomeScreen({
   completion: ExerciseCompletion;
   nutritionPlan: NutritionPlan | null;
   plan: WeeklyPlan;
+  proteinLog: Record<string, number>;
   profile: UserProfile;
   resumeDayIndex: number;
+  waterLog: Record<string, number>;
   onOpenExercise: () => void;
   onOpenNutrition: () => void;
   onOpenProgress: () => void;
@@ -3274,8 +3412,15 @@ function HomeScreen({
   const nutrition = nutritionPlan ?? createFallbackNutritionPlan(profile);
   const firstName = profile.name.trim().split(/\s+/)[0] || "Champ";
   const calories = nutrition.targetCalories ? `${nutrition.targetCalories}` : "--";
-  const protein = nutrition.macros ? `${nutrition.macros.protein}g` : "--";
-  const water = nutrition.macros ? `${nutrition.macros.waterLiters.toFixed(1)}L` : "--";
+  const todayKey = getLocalDateKey();
+  const proteinGoal = nutrition.macros?.protein ?? 0;
+  const waterGoal = nutrition.macros?.waterLiters ?? 0;
+  const loggedProtein = Number(proteinLog[todayKey] ?? 0);
+  const loggedWater = Number(waterLog[todayKey] ?? 0);
+  const protein = proteinGoal ? `${loggedProtein}/${proteinGoal}g` : "--";
+  const water = waterGoal ? `${loggedWater.toFixed(1)}/${waterGoal.toFixed(1)}L` : "--";
+  const proteinPercent = proteinGoal ? Math.min(100, Math.round((loggedProtein / proteinGoal) * 100)) : 0;
+  const waterPercent = waterGoal ? Math.min(100, Math.round((loggedWater / waterGoal) * 100)) : 0;
   const workoutMinutes = getWorkoutDurationMinutes(profile);
   const goalPercent = targetDay?.isRestDay ? 100 : targetProgress ? targetProgress.percent : weekly.percent;
   const actionLabel = targetDay?.isRestDay ? "Review Recovery" : targetProgress && targetProgress.done + targetProgress.partial > 0 ? `Continue ${targetDay?.day ?? "Workout"}` : `Start ${targetDay?.day ?? "Workout"}`;
@@ -3319,8 +3464,8 @@ function HomeScreen({
         </div>
         <div className="mt-4 grid gap-3">
           <HomeProgressItem icon={<Dumbbell size={20} />} label="Workout" percent={goalPercent} value={targetProgress ? `${targetProgress.done}/${targetProgress.total}` : `${weekly.percent}%`} tone="blue" />
-          <HomeProgressItem icon={<Utensils size={20} />} label="Protein goal" percent={100} value={protein} tone="orange" onClick={onOpenNutrition} />
-          <HomeProgressItem icon={<Droplet size={20} />} label="Water goal" percent={100} value={water} tone="cyan" onClick={onOpenNutrition} />
+          <HomeProgressItem icon={<Utensils size={20} />} label="Protein goal" percent={proteinPercent} value={protein} tone="orange" onClick={onOpenNutrition} />
+          <HomeProgressItem icon={<Droplet size={20} />} label="Water goal" percent={waterPercent} value={water} tone="cyan" onClick={onOpenNutrition} />
           <HomeProgressItem icon={<Timer size={20} />} label="Active" percent={Math.min(100, Math.round((activitySummary.activeSeconds / Math.max(1, workoutMinutes * 60)) * 100))} value={formatDuration(activitySummary.activeSeconds)} tone="green" />
         </div>
       </section>
@@ -3712,6 +3857,13 @@ function TodayWorkoutScreen({
     return () => window.clearInterval(timer);
   }, []);
 
+  const queue = getWorkoutQueue(day);
+  const currentIndex = queue.findIndex((item) => completion[item.id] !== "Done");
+  const currentItem = currentIndex >= 0 ? queue[currentIndex] : null;
+  const upcomingItem = currentIndex >= 0 ? queue[currentIndex + 1] : null;
+  const completedItems = queue.filter((item) => completion[item.id] === "Done").length;
+  const currentPosition = currentItem ? currentIndex + 1 : queue.length;
+
   if (day.isRestDay) {
     return (
       <section className="flex flex-1 flex-col gap-4 p-4 pb-24 pt-3 sm:gap-5 sm:p-5 sm:pb-28 sm:pt-4">
@@ -3749,68 +3901,89 @@ function TodayWorkoutScreen({
         onWeightChange={(key, value) => onUpdateWorkoutWeight(day, key, value)}
       />
 
-      <WorkoutSection
-        loggedSeconds={activitySummary.warmUpSeconds}
-        title="Warm-up"
-        subtitle="Do these first so your body feels ready"
-      >
-        {day.warmUp.map((activity) => (
-          <ActivityCard
-            activity={activity}
-            key={activity.id}
-            status={completion[activity.id] ?? "Not done"}
-            timer={getItemTimer(log, activity.id)}
-            onOpenVideo={onOpenVideo}
-            onToggleTimer={() => onToggleItemTimer(day, activity.id)}
-            onUpdateStatus={(status) => onUpdateExerciseStatus(activity.id, status)}
-          />
-        ))}
-      </WorkoutSection>
+      <section className="rounded-3xl border border-[#334155] bg-[#1E293B] p-4">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-xs font-black uppercase tracking-wide text-[#F97316]">Session progress</p>
+            <h2 className="mt-1 text-xl font-black text-white">
+              {currentItem ? `${currentPosition}/${queue.length}` : `${queue.length}/${queue.length}`}
+            </h2>
+          </div>
+          <div className="rounded-2xl bg-[#0F172A] px-3 py-2 text-right">
+            <p className="text-[10px] font-black uppercase tracking-wide text-[#94A3B8]">Done</p>
+            <p className="text-sm font-black text-[#ABD600]">{completedItems}/{queue.length}</p>
+          </div>
+        </div>
+        <ProgressBar percent={queue.length ? Math.round((completedItems / queue.length) * 100) : 0} tone="green" />
+      </section>
 
-      <WorkoutSection
-        loggedSeconds={activitySummary.workoutSeconds}
-        title="Exercises"
-        subtitle="Use the main option or switch to alternative if equipment is busy."
-      >
-        {day.exercises.map((exercise) => (
-          <ExerciseCard
-            completionStatus={completion[exercise.id] ?? "Not done"}
-            exercise={exercise}
-            key={exercise.id}
-            selectedOption={exerciseSelection[exercise.id] ?? "main"}
-            setLogs={log.setLogs[exercise.id]}
-            timer={getItemTimer(log, exercise.id)}
-            onChooseOption={(selectedOption) => onChooseExerciseOption(exercise.id, selectedOption)}
-            onOpenVideo={onOpenVideo}
-            onToggleTimer={() => onToggleItemTimer(day, exercise.id)}
-            onUpdateSetLog={(setIndex, key, value) => onUpdateExerciseSetLog(day, exercise.id, setIndex, key, value)}
-            onUpdateStatus={(status) => onUpdateExerciseStatus(exercise.id, status)}
-          />
-        ))}
-      </WorkoutSection>
+      {currentItem ? (
+        <section className="grid gap-3">
+          <div>
+            <p className="text-xs font-black uppercase tracking-wide text-[#ABD600]">Current</p>
+            <h2 className="mt-1 text-2xl font-black text-white">{currentItem.section}</h2>
+          </div>
+          {currentItem.kind === "activity" ? (
+            <ActivityCard
+              activity={currentItem.activity}
+              key={currentItem.id}
+              status={completion[currentItem.id] ?? "Not done"}
+              timer={getItemTimer(log, currentItem.id)}
+              onOpenVideo={onOpenVideo}
+              onToggleTimer={() => onToggleItemTimer(day, currentItem.id)}
+              onUpdateStatus={(status) => onUpdateExerciseStatus(currentItem.id, status)}
+            />
+          ) : (
+            <ExerciseCard
+              completionStatus={completion[currentItem.id] ?? "Not done"}
+              exercise={currentItem.exercise}
+              key={currentItem.id}
+              selectedOption={exerciseSelection[currentItem.id] ?? "main"}
+              setLogs={log.setLogs[currentItem.id]}
+              timer={getItemTimer(log, currentItem.id)}
+              onChooseOption={(selectedOption) => onChooseExerciseOption(currentItem.id, selectedOption)}
+              onOpenVideo={onOpenVideo}
+              onToggleTimer={() => onToggleItemTimer(day, currentItem.id)}
+              onUpdateSetLog={(setIndex, key, value) => onUpdateExerciseSetLog(day, currentItem.id, setIndex, key, value)}
+              onUpdateStatus={(status) => onUpdateExerciseStatus(currentItem.id, status)}
+            />
+          )}
+        </section>
+      ) : (
+        <section className="rounded-3xl border border-[#22C55E]/40 bg-[#12251B] p-5 text-center">
+          <CheckCheck className="mx-auto text-[#86EFAC]" size={30} />
+          <h2 className="mt-3 text-2xl font-black text-white">Workout items complete</h2>
+          <p className="mt-2 text-sm font-bold leading-6 text-[#CBD5E1]">Do your check-in to save how the session felt</p>
+        </section>
+      )}
 
-      <WorkoutSection
-        loggedSeconds={activitySummary.coolDownSeconds}
-        title="Cooldown"
-        subtitle="Bring your heart rate down and recover better."
-      >
-        {day.coolDown.map((activity) => (
-          <ActivityCard
-            activity={activity}
-            key={activity.id}
-            status={completion[activity.id] ?? "Not done"}
-            timer={getItemTimer(log, activity.id)}
-            onOpenVideo={onOpenVideo}
-            onToggleTimer={() => onToggleItemTimer(day, activity.id)}
-            onUpdateStatus={(status) => onUpdateExerciseStatus(activity.id, status)}
-          />
-        ))}
-      </WorkoutSection>
+      {upcomingItem && <UpcomingWorkoutCard item={upcomingItem} position={currentIndex + 2} total={queue.length} />}
 
       <button className="mt-auto flex min-h-[3.25rem] w-full items-center justify-center gap-2 rounded-2xl bg-[#40B5AD] px-5 font-black text-slate-950 shadow-xl shadow-teal-200 sm:min-h-14" onClick={onCheckIn} type="button">
         Finish Workout
         <ChevronRight size={20} />
       </button>
+    </section>
+  );
+}
+
+function UpcomingWorkoutCard({ item, position, total }: { item: WorkoutQueueItem; position: number; total: number }) {
+  const title = item.kind === "activity" ? item.activity.name : item.exercise.main.name;
+  const detail =
+    item.kind === "activity"
+      ? `${item.activity.time} | ${item.activity.reps}`
+      : `${item.exercise.main.sets} sets | ${item.exercise.main.repsPerSet} reps`;
+
+  return (
+    <section className="rounded-3xl border border-[#334155] bg-[#1E293B] p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs font-black uppercase tracking-wide text-[#94A3B8]">Upcoming {position}/{total}</p>
+          <h3 className="mt-1 truncate text-lg font-black text-white">{title}</h3>
+          <p className="mt-1 text-sm font-bold text-[#CBD5E1]">{item.section} | {detail}</p>
+        </div>
+        <span className="shrink-0 rounded-full bg-[#0F172A] px-3 py-1 text-xs font-black text-[#ABD600]">Next</span>
+      </div>
     </section>
   );
 }
@@ -3862,7 +4035,7 @@ function WeightInput({ label, value, onChange }: { label: string; value: string;
           max={VALUE_RULES.weight.max}
           min={VALUE_RULES.weight.min}
           placeholder="kg"
-          step="0.1"
+          step="0.01"
           type="number"
           value={value}
           onChange={(event) => onChange(event.target.value)}
@@ -4195,10 +4368,11 @@ function MetricTile({ label, value }: { label: string; value: string }) {
   );
 }
 
-function ProgressBar({ percent }: { percent: number }) {
+function ProgressBar({ percent, tone = "green" }: { percent: number; tone?: "green" | "cyan" | "orange" }) {
+  const toneClass = tone === "cyan" ? "bg-[#06B6D4]" : tone === "orange" ? "bg-[#F97316]" : "bg-[#22C55E]";
   return (
     <div className="mt-2 h-3 overflow-hidden rounded-full bg-[#334155]">
-      <div className="h-full rounded-full bg-[#22C55E] transition-all" style={{ width: `${Math.min(100, Math.max(0, percent))}%` }} />
+      <div className={`h-full rounded-full ${toneClass} transition-all`} style={{ width: `${Math.min(100, Math.max(0, percent))}%` }} />
     </div>
   );
 }
@@ -4571,12 +4745,20 @@ function NutritionScreen({
   profile,
   nutritionPlan,
   isLoading,
+  proteinLog,
+  waterLog,
   onDietPreferenceChange,
+  onLogProtein,
+  onLogWater,
 }: {
   profile: UserProfile;
   nutritionPlan: NutritionPlan | null;
   isLoading: boolean;
+  proteinLog: Record<string, number>;
+  waterLog: Record<string, number>;
   onDietPreferenceChange: (dietPreference: UserProfile["dietPreference"]) => void;
+  onLogProtein: (grams: number) => void;
+  onLogWater: (ml: number) => void;
 }) {
   const plan = nutritionPlan ?? createFallbackNutritionPlan(profile);
   const dietOptions: UserProfile["dietPreference"][] = ["Vegetarian", "Non-vegetarian", "Eggetarian", "Vegan"];
@@ -4586,10 +4768,12 @@ function NutritionScreen({
   const fats = plan.macros?.fats ?? 0;
   const waterGoal = plan.macros?.waterLiters ?? getDailyWaterToDrinkLiters(profile);
   const todayKey = getLocalDateKey();
-  const [waterLog, setWaterLog] = useState<Record<string, number>>(() => readStorage<Record<string, number>>(STORAGE_KEYS.waterIntake, {}));
   const [selectedMealStyle, setSelectedMealStyle] = useState<MealStyle>("North Indian");
   const [mealRefreshIndex, setMealRefreshIndex] = useState(0);
   const waterIntake = Number(waterLog[todayKey] ?? 0);
+  const proteinIntake = Number(proteinLog[todayKey] ?? 0);
+  const waterIntakePercent = waterGoal ? Math.min(100, Math.round((waterIntake / waterGoal) * 100)) : 0;
+  const proteinIntakePercent = protein ? Math.min(100, Math.round((proteinIntake / protein) * 100)) : 0;
   const mealStyles: MealStyle[] = ["North Indian", "South Indian", "Quick Budget"];
   const visibleMeals = getMealChoices(profile.dietPreference, selectedMealStyle);
   const mealLibrary = getMealSpotlightLibrary(profile.dietPreference, selectedMealStyle, plan);
@@ -4597,13 +4781,6 @@ function NutritionScreen({
   const proteinPercent = getMacroCalorieShare(protein, 4, targetCalories);
   const carbsPercent = getMacroCalorieShare(carbs, 4, targetCalories);
   const fatsPercent = getMacroCalorieShare(fats, 9, targetCalories);
-
-  function logWater(ml: number) {
-    const nextAmount = Number(Math.min(waterGoal, waterIntake + ml / 1000).toFixed(2));
-    const nextLog = { ...waterLog, [todayKey]: nextAmount };
-    setWaterLog(nextLog);
-    writeStorage(STORAGE_KEYS.waterIntake, nextLog);
-  }
 
   return (
     <section className="flex flex-1 flex-col gap-6 bg-[#0F172A] p-4 pb-24 pt-4 sm:gap-7 sm:p-5 sm:pb-28 sm:pt-5">
@@ -4634,6 +4811,7 @@ function NutritionScreen({
           <div className="min-w-0 flex-1">
             <h2 className="text-lg font-black text-white">Water Intake</h2>
             <p className="mt-1 text-xl font-black text-[#CBD5E1]">{waterIntake.toFixed(1)}L / {waterGoal.toFixed(1)}L</p>
+            <ProgressBar percent={waterIntakePercent} tone="cyan" />
           </div>
         </div>
         <div className="mt-4 grid grid-cols-3 gap-2">
@@ -4641,11 +4819,37 @@ function NutritionScreen({
             <button
               className="flex min-h-11 items-center justify-center gap-1 rounded-2xl bg-[#B3C5FF] px-2 text-xs font-black text-[#002B75] transition active:scale-[0.98]"
               key={ml}
-              onClick={() => logWater(ml)}
+              onClick={() => onLogWater(ml)}
               type="button"
             >
               <Plus size={15} />
               {ml} ml
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="rounded-3xl border border-[#334155] bg-[#1E293B] p-4">
+        <div className="flex items-center gap-3">
+          <div className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl bg-[#F97316]/20 text-[#FB923C]">
+            <Utensils size={26} />
+          </div>
+          <div className="min-w-0 flex-1">
+            <h2 className="text-lg font-black text-white">Protein Log</h2>
+            <p className="mt-1 text-xl font-black text-[#CBD5E1]">{proteinIntake}g / {protein || "-"}g</p>
+            <ProgressBar percent={proteinIntakePercent} tone="orange" />
+          </div>
+        </div>
+        <div className="mt-4 grid grid-cols-3 gap-2">
+          {[10, 20, 30].map((grams) => (
+            <button
+              className="flex min-h-11 items-center justify-center gap-1 rounded-2xl bg-[#F97316] px-2 text-xs font-black text-[#283500] transition active:scale-[0.98]"
+              key={grams}
+              onClick={() => onLogProtein(grams)}
+              type="button"
+            >
+              <Plus size={15} />
+              {grams} g
             </button>
           ))}
         </div>
@@ -5060,6 +5264,7 @@ function ProfileScreen({
               max={VALUE_RULES.height.max}
               min={VALUE_RULES.height.min}
               placeholder="170"
+              step="0.01"
               suffix="cm"
               value={draftProfile.height}
               onChange={(value) => updateDraftProfile("height", value)}
@@ -5070,7 +5275,7 @@ function ProfileScreen({
               max={VALUE_RULES.weight.max}
               min={VALUE_RULES.weight.min}
               placeholder="70"
-              step="0.1"
+              step="0.01"
               suffix="kg"
               value={draftProfile.weight}
               onChange={(value) => updateDraftProfile("weight", value)}

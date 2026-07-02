@@ -200,6 +200,24 @@ button {
   color: var(--gb-on-lime) !important;
 }
 
+.gb-theme .bg-\[\#ABD600\],
+.gb-theme .bg-\[\#F97316\],
+.gb-theme .bg-\[\#22C55E\],
+.gb-theme .bg-orange-500,
+.gb-theme .bg-green-500,
+.gb-theme .bg-emerald-500 {
+  color: var(--gb-on-lime) !important;
+}
+
+.gb-theme .bg-\[\#ABD600\] *,
+.gb-theme .bg-\[\#F97316\] *,
+.gb-theme .bg-\[\#22C55E\] *,
+.gb-theme .bg-orange-500 *,
+.gb-theme .bg-green-500 *,
+.gb-theme .bg-emerald-500 * {
+  color: var(--gb-on-lime) !important;
+}
+
 .gb-theme .border-white\/80,
 .gb-theme .border-slate-100,
 .gb-theme .border-slate-200,
