@@ -1616,17 +1616,21 @@ function getDayProgress(day: DayPlan, completion: ExerciseCompletion) {
 
 function getWeeklyProgress(plan: WeeklyPlan | null, completion: ExerciseCompletion) {
   const workoutDays = plan?.days.filter((day) => !day.isRestDay) ?? [];
-  const totalExercises = workoutDays.reduce((sum, day) => sum + day.exercises.length, 0);
-  const doneExercises = workoutDays.reduce((sum, day) => sum + day.exercises.filter((exercise) => completion[exercise.id] === "Done").length, 0);
-  const partialExercises = workoutDays.reduce((sum, day) => sum + day.exercises.filter((exercise) => completion[exercise.id] === "Partially done").length, 0);
-  const progressUnits = doneExercises + partialExercises * 0.5;
-  const percent = totalExercises ? Math.round((progressUnits / totalExercises) * 100) : 0;
+  const dayProgress = workoutDays.map((day) => getDayProgress(day, completion));
+  const totalItems = dayProgress.reduce((sum, progress) => sum + progress.total, 0);
+  const doneItems = dayProgress.reduce((sum, progress) => sum + progress.done, 0);
+  const partialItems = dayProgress.reduce((sum, progress) => sum + progress.partial, 0);
+  const progressUnits = doneItems + partialItems * 0.5;
+  const percent = totalItems ? Math.round((progressUnits / totalItems) * 100) : 0;
 
   return {
     workoutDays: workoutDays.length,
-    totalExercises,
-    doneExercises,
-    partialExercises,
+    totalExercises: totalItems,
+    doneExercises: doneItems,
+    partialExercises: partialItems,
+    totalItems,
+    doneItems,
+    partialItems,
     percent,
   };
 }
@@ -3445,7 +3449,7 @@ function HomeScreen({
           <CircularProgress percent={goalPercent} />
           <h2 className="mt-4 text-center text-2xl font-black text-white">{targetDay?.title ?? "Week complete"}</h2>
           <p className="mt-1 text-center text-sm font-semibold text-[#CBD5E1]">
-            {targetDay?.isRestDay ? "Recovery day. Keep it light." : targetProgress ? `${targetProgress.done}/${targetProgress.total} exercises done` : `${weekly.percent}% weekly progress`}
+            {targetDay?.isRestDay ? "Recovery day. Keep it light." : targetProgress ? `${targetProgress.done}/${targetProgress.total} items done` : `${weekly.percent}% weekly progress`}
           </p>
         </div>
         <div className="mt-6 grid grid-cols-3 gap-2 text-center">
@@ -3668,7 +3672,7 @@ function WeeklyPlanScreen({
             {resumeDay.isRestDay
               ? "Today is a recovery day. Tap to open light mobility."
               : resumeProgress
-                ? `${resumeProgress.done}/${resumeProgress.total} exercises done. Tap to continue`
+                ? `${resumeProgress.done}/${resumeProgress.total} items done. Tap to continue`
                 : "Tap to continue from where you left off."}
           </p>
           {!resumeDay.isRestDay && resumeProgress && <ProgressBar percent={resumeProgress.percent} />}
@@ -3861,7 +3865,7 @@ function TodayWorkoutScreen({
   const currentIndex = queue.findIndex((item) => completion[item.id] !== "Done");
   const currentItem = currentIndex >= 0 ? queue[currentIndex] : null;
   const upcomingItem = currentIndex >= 0 ? queue[currentIndex + 1] : null;
-  const completedItems = queue.filter((item) => completion[item.id] === "Done").length;
+  const dayProgress = getDayProgress(day, completion);
   const currentPosition = currentItem ? currentIndex + 1 : queue.length;
 
   if (day.isRestDay) {
@@ -3910,11 +3914,14 @@ function TodayWorkoutScreen({
             </h2>
           </div>
           <div className="rounded-2xl bg-[#0F172A] px-3 py-2 text-right">
-            <p className="text-[10px] font-black uppercase tracking-wide text-[#94A3B8]">Done</p>
-            <p className="text-sm font-black text-[#ABD600]">{completedItems}/{queue.length}</p>
+            <p className="text-[10px] font-black uppercase tracking-wide text-[#94A3B8]">Progress</p>
+            <p className="text-sm font-black text-[#ABD600]">{dayProgress.percent}%</p>
           </div>
         </div>
-        <ProgressBar percent={queue.length ? Math.round((completedItems / queue.length) * 100) : 0} tone="green" />
+        <ProgressBar percent={dayProgress.percent} tone="green" />
+        <p className="mt-2 text-xs font-black text-[#B3C5FF]">
+          {dayProgress.done}/{dayProgress.total} done{dayProgress.partial > 0 ? ` | ${dayProgress.partial} partial` : ""}
+        </p>
       </section>
 
       {currentItem ? (
@@ -4419,7 +4426,7 @@ function ProgressScreen({
             <p className="text-sm font-black uppercase tracking-wide text-[#F97316]">This week</p>
             <div className="mt-3 flex items-end justify-between gap-4">
               <h2 className="text-4xl font-black sm:text-5xl">{weekly.percent}%</h2>
-              <p className="pb-2 text-sm font-black text-[#CBD5E1]">{weekly.doneExercises}/{weekly.totalExercises} exercises done</p>
+              <p className="pb-2 text-sm font-black text-[#CBD5E1]">{weekly.doneItems}/{weekly.totalItems} items done</p>
             </div>
             <ProgressBar percent={weekly.percent} />
             <p className="mt-4 text-sm font-black text-[#CBD5E1]">Tap to view daily progress</p>
@@ -4439,8 +4446,8 @@ function ProgressScreen({
 
           <div className="grid grid-cols-3 gap-3">
             <MetricTile label="Workout days" value={String(weekly.workoutDays)} />
-            <MetricTile label="Partial" value={String(weekly.partialExercises)} />
-            <MetricTile label="Done" value={String(weekly.doneExercises)} />
+            <MetricTile label="Partial" value={String(weekly.partialItems)} />
+            <MetricTile label="Done" value={String(weekly.doneItems)} />
           </div>
 
           <ExercisePerformancePanel rows={performanceRows} />
@@ -4654,6 +4661,7 @@ function MonthlyProgressCalendar({ plan, completion, history }: { plan: WeeklyPl
 
   function getSnapshot(weekNumber: number) {
     if (liveSnapshot?.week === weekNumber) return liveSnapshot;
+    if (weekNumber > currentWeek) return undefined;
     return history[getWeekProgressKey(weekNumber)];
   }
 
