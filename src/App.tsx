@@ -27,6 +27,7 @@ import {
   X,
 } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { identifyUser, resetMixpanelUser, trackEvent } from "./lib/mixpanel";
 import { isSupabaseConfigured, supabase, type Session } from "./lib/supabase";
 
 type Screen = "welcome" | "onboarding" | "loading" | "save-plan" | "home" | "weekly-plan" | "today-workout" | "check-in" | "adaptation" | "nutrition" | "progress" | "profile";
@@ -230,6 +231,12 @@ type WeekProgressSnapshot = {
 };
 
 type MonthlyProgress = Record<string, WeekProgressSnapshot>;
+type PlanArchiveEntry = {
+  plan: WeeklyPlan;
+  completion: ExerciseCompletion;
+  exerciseSelection: ExerciseSelection;
+};
+type PlanArchive = Record<string, PlanArchiveEntry>;
 
 type VideoTarget = {
   title: string;
@@ -287,6 +294,7 @@ const STORAGE_KEYS = {
   proteinIntake: "gymbuddy:protein-intake",
   weightLog: "gymbuddy:weekly-weight-log",
   workoutLogs: "gymbuddy:workout-logs",
+  planArchive: "gymbuddy:plan-archive",
 };
 
 const NUTRITION_TARGET_VERSION = "drink-water-standard-v3";
@@ -803,6 +811,36 @@ function getYouTubeEmbedUrl(url: string): string {
 
 function getWorkoutDurationMinutes(profile: UserProfile) {
   return Number.parseInt(profile.workoutDuration, 10) || 45;
+}
+
+function getProfileAnalyticsProperties(profile: UserProfile) {
+  return {
+    goal: profile.goal,
+    experience_level: profile.experienceLevel,
+    gym_type: profile.gymType,
+    days_per_week: profile.daysPerWeek,
+    workout_duration: profile.workoutDuration,
+    confidence_level: profile.confidenceLevel,
+    bmi_category: profile.bmiCategory,
+    injury_or_pain: profile.injuryOrPain,
+    diet_preference: profile.dietPreference,
+    body_goal: profile.bodyGoal,
+  };
+}
+
+function getWorkoutAnalyticsProperties(day: DayPlan, plan: WeeklyPlan | null, completion: ExerciseCompletion) {
+  const progress = getDayProgress(day, completion);
+  return {
+    week: plan?.week ?? 1,
+    day: day.day,
+    day_title: day.title,
+    is_rest_day: day.isRestDay,
+    progress_percent: progress.percent,
+    items_done: progress.done,
+    items_partial: progress.partial,
+    items_skipped: progress.skipped,
+    total_items: progress.total,
+  };
 }
 
 function getCalendarStartDate() {
@@ -1820,6 +1858,7 @@ function App() {
   const [planSource, setPlanSource] = useState<PlanSource>(() => readStorage<PlanSource>(STORAGE_KEYS.planSource, "idle"));
   const [aiError, setAiError] = useState(() => readStorage(STORAGE_KEYS.aiError, ""));
   const [monthlyProgress, setMonthlyProgress] = useState<MonthlyProgress>(() => readStorage(STORAGE_KEYS.monthlyProgress, {}));
+  const [planArchive, setPlanArchive] = useState<PlanArchive>(() => readStorage<PlanArchive>(STORAGE_KEYS.planArchive, {}));
   const [reminderSettings, setReminderSettings] = useState<ReminderSettings>(() => normalizeReminderSettings(readStorage<Partial<ReminderSettings>>(STORAGE_KEYS.reminderSettings, initialReminderSettings)));
   const [nutritionPlan, setNutritionPlan] = useState<NutritionPlan | null>(() => readStorage<NutritionPlan | null>(STORAGE_KEYS.nutritionPlan, null));
   const [nutritionSource, setNutritionSource] = useState<NutritionSource>(() => readStorage<NutritionSource>(STORAGE_KEYS.nutritionSource, "idle"));
@@ -1844,6 +1883,7 @@ function App() {
   const [syncMessage, setSyncMessage] = useState("Local save is active.");
   const [lastSyncedAt, setLastSyncedAt] = useState("");
   const [cloudLoadedFor, setCloudLoadedFor] = useState("");
+  const appOpenedTracked = useRef(false);
 
   const todaysPlan = weeklyPlan?.days[selectedDayIndex] ?? weeklyPlan?.days[0] ?? null;
   const todaysWorkoutLog = getWorkoutLog(workoutLogs, todaysPlan, profile.weight);
@@ -1855,6 +1895,24 @@ function App() {
   const showAppHeader = Boolean(weeklyPlan) && !["welcome", "onboarding", "loading", "save-plan"].includes(screen);
   const activeMainTab: MainTab = screen === "nutrition" ? "nutrition" : screen === "progress" ? "progress" : screen === "weekly-plan" || screen === "today-workout" || screen === "check-in" || screen === "adaptation" ? "exercise" : "home";
   const headerSubtitle = getHeaderSubtitle(screen);
+
+  useEffect(() => {
+    if (appOpenedTracked.current) return;
+    appOpenedTracked.current = true;
+    trackEvent("app_opened", {
+      initial_screen: screen,
+      has_saved_plan: Boolean(weeklyPlan),
+      auth_status: authStatus,
+    });
+  }, [authStatus, screen, weeklyPlan]);
+
+  useEffect(() => {
+    if (!session?.user.id) return;
+    identifyUser(session.user.id, {
+      auth_method: "email_password",
+      has_saved_plan: Boolean(weeklyPlan),
+    });
+  }, [session?.user.id, weeklyPlan]);
 
   useEffect(() => {
     const bmi = calculateBmi(profile.height, profile.weight);
@@ -1869,6 +1927,22 @@ function App() {
   useEffect(() => {
     writeStorage(STORAGE_KEYS.selectedDayIndex, selectedDayIndex);
   }, [selectedDayIndex]);
+
+  useEffect(() => {
+    if (!weeklyPlan) return;
+    setPlanArchive((current) => {
+      const next = {
+        ...current,
+        [String(weeklyPlan.week)]: {
+          plan: weeklyPlan,
+          completion,
+          exerciseSelection,
+        },
+      };
+      writeStorage(STORAGE_KEYS.planArchive, next);
+      return next;
+    });
+  }, [completion, exerciseSelection, weeklyPlan]);
 
   useEffect(() => {
     if (["welcome", "onboarding", "loading"].includes(screen)) return;
@@ -2388,7 +2462,7 @@ function App() {
 
     setSyncStatus("loading");
     setSyncMessage(mode === "sign-up" ? "Creating your account..." : "Signing you in...");
-    const { error } =
+    const { data, error } =
       mode === "sign-up"
         ? await supabase.auth.signUp({ email: cleanEmail, password })
         : await supabase.auth.signInWithPassword({ email: cleanEmail, password });
@@ -2401,6 +2475,19 @@ function App() {
 
     setSyncStatus("saved");
     setSyncMessage(mode === "sign-up" ? "Signed up successfully" : "Signed in. Your plan can now sync online.");
+    const userId = data.session?.user.id ?? data.user?.id;
+    if (userId) {
+      identifyUser(userId, {
+        auth_method: "email_password",
+        has_saved_plan: Boolean(weeklyPlan),
+      });
+      if (mode === "sign-up") {
+        trackEvent("sign_up_completed", {
+          sign_up_method: "email_password",
+          has_saved_plan: Boolean(weeklyPlan),
+        });
+      }
+    }
     return true;
   }
 
@@ -2466,6 +2553,7 @@ function App() {
   async function handleSignOut() {
     if (!supabase) return;
     await supabase.auth.signOut();
+    resetMixpanelUser();
   }
 
   function goToScreen(nextScreen: Screen) {
@@ -2497,6 +2585,9 @@ function App() {
     const profileSignature = getProfileSignature(finalProfile);
     const cachedSignature = readStorage(STORAGE_KEYS.planProfileSignature, "");
     const cachedPlan = readStorage<WeeklyPlan | null>(STORAGE_KEYS.plan, null);
+    const profileAnalytics = getProfileAnalyticsProperties(finalProfile);
+
+    trackEvent("onboarding_completed", profileAnalytics);
 
     if (cachedPlan && cachedSignature === profileSignature) {
       setProfile(finalProfile);
@@ -2505,6 +2596,12 @@ function App() {
       setSelectedDayIndex(nextDayIndex);
       writeStorage(STORAGE_KEYS.profile, finalProfile);
       writeStorage(STORAGE_KEYS.aiPrompt, prompt);
+      trackEvent("workout_plan_generated", {
+        ...profileAnalytics,
+        week: cachedPlan.week,
+        plan_source: "cached",
+        workout_days: cachedPlan.days.filter((day) => !day.isRestDay).length,
+      });
       setScreen(session?.user.id ? "home" : "save-plan");
       return;
     }
@@ -2512,10 +2609,12 @@ function App() {
     setProfile(finalProfile);
     setCompletion({});
     setExerciseSelection({});
+    setPlanArchive({});
     setSelectedDayIndex(0);
     writeStorage(STORAGE_KEYS.profile, finalProfile);
     writeStorage(STORAGE_KEYS.completion, {});
     writeStorage(STORAGE_KEYS.exerciseSelection, {});
+    writeStorage(STORAGE_KEYS.planArchive, {});
     writeStorage(STORAGE_KEYS.aiPrompt, prompt);
     goToScreen("loading");
 
@@ -2544,6 +2643,13 @@ function App() {
     writeStorage(STORAGE_KEYS.aiError, nextAiError);
     writeStorage(STORAGE_KEYS.planProfileSignature, profileSignature);
     writeStorage(STORAGE_KEYS.monthlyProgress, nextMonthlyProgress);
+    trackEvent("workout_plan_generated", {
+      ...profileAnalytics,
+      week: nextPlan.week,
+      plan_source: nextSource,
+      workout_days: nextPlan.days.filter((day) => !day.isRestDay).length,
+      ai_failed: Boolean(nextAiError),
+    });
     setScreen(session?.user.id ? "home" : "save-plan");
   }
 
@@ -2596,6 +2702,21 @@ function App() {
   }
 
   function handleSaveCheckIn() {
+    if (todaysPlan) {
+      const dayProgress = getDayProgress(todaysPlan, completion);
+      trackEvent("workout_completed", {
+        ...getProfileAnalyticsProperties(profile),
+        ...getWorkoutAnalyticsProperties(todaysPlan, weeklyPlan, completion),
+        check_in_status: checkIn.completionStatus,
+        difficulty: checkIn.difficulty,
+        pain_status: checkIn.painStatus,
+        pain_area: checkIn.painArea,
+        confidence: checkIn.confidence,
+        active_seconds: todaysActivitySummary.activeSeconds,
+        rest_seconds: todaysActivitySummary.restSeconds,
+        completed_items: dayProgress.done,
+      });
+    }
     const nextPlan = createAdaptedPlan(checkIn, completedCount);
     setAdaptedPlan(nextPlan);
     writeStorage(STORAGE_KEYS.checkIn, checkIn);
@@ -2628,9 +2749,31 @@ function App() {
     setScreen("weekly-plan");
   }
 
+  function openArchivedWeek(week: number) {
+    const archiveEntry = planArchive[String(week)];
+    if (!archiveEntry) return;
+
+    setWeeklyPlan(archiveEntry.plan);
+    setCompletion(archiveEntry.completion);
+    setExerciseSelection(archiveEntry.exerciseSelection);
+    setSelectedDayIndex(0);
+    writeStorage(STORAGE_KEYS.plan, archiveEntry.plan);
+    writeStorage(STORAGE_KEYS.completion, archiveEntry.completion);
+    writeStorage(STORAGE_KEYS.exerciseSelection, archiveEntry.exerciseSelection);
+    writeStorage(STORAGE_KEYS.selectedDayIndex, 0);
+    setScreen("weekly-plan");
+  }
+
   function openDay(dayIndex: number) {
+    const targetDay = weeklyPlan?.days[dayIndex];
     setSelectedDayIndex(dayIndex);
     writeStorage(STORAGE_KEYS.selectedDayIndex, dayIndex);
+    if (targetDay && !targetDay.isRestDay) {
+      trackEvent("workout_started", {
+        ...getProfileAnalyticsProperties(profile),
+        ...getWorkoutAnalyticsProperties(targetDay, weeklyPlan, completion),
+      });
+    }
     goToScreen("today-workout");
   }
 
@@ -2707,6 +2850,8 @@ function App() {
             profile={profile}
             completion={completion}
             onOpenDay={openDay}
+            availableWeeks={Object.keys(planArchive).map(Number)}
+            onOpenWeek={openArchivedWeek}
             resumeDay={resumeDay}
             onStartWorkout={() => openDay(resumeDayIndex)}
           />
@@ -3655,24 +3800,31 @@ function HomeProgressItem({
 }
 
 function WeeklyPlanScreen({
+  availableWeeks,
   plan,
   profile,
   completion,
   resumeDay,
   onOpenDay,
+  onOpenWeek,
   onStartWorkout,
 }: {
+  availableWeeks: number[];
   plan: WeeklyPlan | null;
   profile: UserProfile;
   completion: ExerciseCompletion;
   resumeDay: DayPlan | null;
   onOpenDay: (dayIndex: number) => void;
+  onOpenWeek: (week: number) => void;
   onStartWorkout: () => void;
 }) {
   const resumeProgress = resumeDay ? getDayProgress(resumeDay, completion) : null;
   const initialFocusedIndex = plan && resumeDay ? Math.max(0, plan.days.findIndex((day) => day.day === resumeDay.day)) : 0;
   const [focusedDayIndex, setFocusedDayIndex] = useState(initialFocusedIndex);
   const focusedDay = plan?.days[focusedDayIndex] ?? plan?.days[0] ?? null;
+  const week = plan?.week ?? 1;
+  const hasPreviousWeek = availableWeeks.includes(week - 1);
+  const hasNextWeek = availableWeeks.includes(week + 1);
 
   useEffect(() => {
     if (!plan) return;
@@ -3681,13 +3833,13 @@ function WeeklyPlanScreen({
 
   return (
     <section className="flex flex-1 flex-col gap-4 p-4 pb-24 pt-3 sm:gap-5 sm:p-5 sm:pb-28 sm:pt-4">
-      <ScreenTitle icon={<Wand2 size={22} />} title="Your Week 1 Plan" subtitle="Start with Day 1." />
+      <ScreenTitle icon={<Wand2 size={22} />} title={`Your Week ${week} Plan`} subtitle={week === 1 ? "Start with Day 1" : `Continue Week ${week}`} />
       <div className="rounded-3xl border border-[#334155] bg-[#273449] p-4 shadow-xl shadow-black/10 sm:p-5">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <p className="text-xs font-black uppercase tracking-wide text-[#F97316]">Week 1 ready</p>
+            <p className="text-xs font-black uppercase tracking-wide text-[#F97316]">Week {week} ready</p>
             <h2 className="mt-2 text-2xl font-black leading-tight text-white">
-              {profile.name ? `${profile.name}'s Week 1 Plan` : "Your Week 1 Plan"}
+              {profile.name ? `${profile.name}'s Week ${week} Plan` : `Your Week ${week} Plan`}
             </h2>
           </div>
           <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-[#0F172A] text-[#22C55E]">
@@ -3700,6 +3852,27 @@ function WeeklyPlanScreen({
           <PlanMiniChip label="Time" value={profile.workoutDuration.replace(" minutes", "m")} />
         </div>
       </div>
+
+      {(hasPreviousWeek || hasNextWeek) && (
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            className="min-h-11 rounded-2xl border border-[#D8E0EC] bg-white px-4 text-sm font-black text-[#64748B] disabled:opacity-40"
+            disabled={!hasPreviousWeek}
+            onClick={() => onOpenWeek(week - 1)}
+            type="button"
+          >
+            Previous Week
+          </button>
+          <button
+            className="min-h-11 rounded-2xl bg-[#3B6FE8] px-4 text-sm font-black text-white disabled:opacity-40"
+            disabled={!hasNextWeek}
+            onClick={() => onOpenWeek(week + 1)}
+            type="button"
+          >
+            Next Week
+          </button>
+        </div>
+      )}
 
       {resumeDay && (
         <button
