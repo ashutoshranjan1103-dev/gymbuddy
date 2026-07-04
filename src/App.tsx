@@ -1968,8 +1968,9 @@ function App() {
   }, [headerToast]);
 
   const saveCloudState = useCallback(
-    async (successMessage = "Saved online.") => {
-      if (!supabase || !session?.user.id) {
+    async (successMessage = "Saved online.", userIdOverride?: string) => {
+      const userId = userIdOverride ?? session?.user.id;
+      if (!supabase || !userId) {
         setSyncStatus(isSupabaseConfigured ? "idle" : "error");
         setSyncMessage(isSupabaseConfigured ? "Sign in to save this plan online." : "Online save is not available right now.");
         return false;
@@ -1979,7 +1980,7 @@ function App() {
 
       try {
         const payload = {
-          user_id: session.user.id,
+          user_id: userId,
           profile,
           weekly_plan: weeklyPlan,
           exercise_completion: completion,
@@ -2473,8 +2474,20 @@ function App() {
       return false;
     }
 
+    if (mode === "sign-up" && !data.session) {
+      setSyncStatus("error");
+      setSyncMessage("Email verification is still enabled in Supabase. Turn it off so signup can log in automatically.");
+      return false;
+    }
+
+    if (data.session) {
+      setSession(data.session);
+      setAuthStatus("signed-in");
+      setCloudLoadedFor(data.session.user.id);
+    }
+
     setSyncStatus("saved");
-    setSyncMessage(mode === "sign-up" ? "Signed up successfully" : "Signed in. Your plan can now sync online.");
+    setSyncMessage(mode === "sign-up" ? "Signed up successfully. Your plan is saved online." : "Signed in. Your plan can now sync online.");
     const userId = data.session?.user.id ?? data.user?.id;
     if (userId) {
       identifyUser(userId, {
@@ -2487,6 +2500,7 @@ function App() {
           has_saved_plan: Boolean(weeklyPlan),
         });
       }
+      await saveCloudState(mode === "sign-up" ? "Account created and plan saved." : "Signed in and plan saved.", userId);
     }
     return true;
   }
@@ -3427,7 +3441,6 @@ function PasswordBackupForm({
     const success = await onAuth(email, password, mode);
     if (success && mode === "sign-up") {
       setSignedUpSuccessfully(true);
-      setMode("sign-in");
       setPassword("");
     }
   }
@@ -3435,10 +3448,10 @@ function PasswordBackupForm({
   return (
     <div className="grid gap-3 rounded-3xl border border-[#334155] bg-[#1E293B] p-4">
       <div>
-        <p className="text-sm font-black text-white">{signedUpSuccessfully ? "Sign in" : mode === "sign-up" ? "Create account" : "Sign in"}</p>
+        <p className="text-sm font-black text-white">{signedUpSuccessfully ? "Account created" : mode === "sign-up" ? "Create account" : "Sign in"}</p>
         <p className="mt-1 text-sm font-semibold text-[#CBD5E1]">Email + password</p>
       </div>
-      {signedUpSuccessfully && <p className="rounded-2xl bg-[#22C55E]/15 px-4 py-3 text-sm font-black text-[#86EFAC]">Signed up successfully</p>}
+      {signedUpSuccessfully && <p className="rounded-2xl bg-[#22C55E]/15 px-4 py-3 text-sm font-black text-[#86EFAC]">Signed up successfully. Your plan is saved.</p>}
       {!signedUpSuccessfully && (
         <div className="grid grid-cols-2 gap-2 rounded-2xl bg-[#0F172A] p-1">
           <button className={`min-h-10 rounded-xl text-sm font-black ${mode === "sign-up" ? "bg-[#3B82F6] text-white" : "text-[#CBD5E1]"}`} onClick={() => setMode("sign-up")} type="button">
@@ -3678,7 +3691,7 @@ function HomeScreen({
           backgroundSize: "cover",
         }}
       >
-        <div className="absolute right-4 top-4 rounded-full border border-white/20 bg-[#273449]/85 px-3 py-1 text-xs font-black text-[#CBD5E1] backdrop-blur">
+        <div className="absolute right-4 top-4 rounded-full border border-white/70 bg-white/95 px-3 py-1 text-xs font-black !text-[#3B6FE8] shadow-lg shadow-slate-950/15 backdrop-blur">
           {profile.gymType}
         </div>
         <div className="flex h-full min-h-[198px] flex-col justify-end">
