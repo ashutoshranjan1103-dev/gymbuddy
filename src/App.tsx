@@ -14,6 +14,7 @@ import {
   Flame,
   HeartPulse,
   House,
+  Lock,
   LogOut,
   Mail,
   Pause,
@@ -235,6 +236,7 @@ type PlanArchiveEntry = {
   plan: WeeklyPlan;
   completion: ExerciseCompletion;
   exerciseSelection: ExerciseSelection;
+  selectedDayIndex?: number;
 };
 type PlanArchive = Record<string, PlanArchiveEntry>;
 
@@ -280,6 +282,7 @@ const STORAGE_KEYS = {
   planProfileSignature: "gymbuddy:plan-profile-signature",
   planSource: "gymbuddy:plan-source",
   aiError: "gymbuddy:ai-error",
+  planStartDate: "gymbuddy:plan-start-date",
   selectedDayIndex: "gymbuddy:selected-day-index",
   lastActiveScreen: "gymbuddy:last-active-screen",
   lastActiveDate: "gymbuddy:last-active-date",
@@ -451,6 +454,12 @@ function getNextWorkoutDayIndex(plan: WeeklyPlan | null, completion: ExerciseCom
   if (nextIncompleteWorkout >= 0) return nextIncompleteWorkout;
   const firstWorkout = plan.days.findIndex((day) => !day.isRestDay);
   return firstWorkout >= 0 ? firstWorkout : 0;
+}
+
+function getNextCalendarDayIndex(plan: WeeklyPlan | null, currentIndex: number) {
+  if (!plan?.days.length) return 0;
+  const safeIndex = Number.isFinite(currentIndex) ? Math.min(Math.max(currentIndex, 0), plan.days.length - 1) : 0;
+  return Math.min(safeIndex + 1, plan.days.length - 1);
 }
 
 function getResumeDayIndex(plan: WeeklyPlan | null, completion: ExerciseCompletion, storedIndex: number) {
@@ -841,111 +850,6 @@ function getWorkoutAnalyticsProperties(day: DayPlan, plan: WeeklyPlan | null, co
     items_skipped: progress.skipped,
     total_items: progress.total,
   };
-}
-
-function getCalendarStartDate() {
-  const start = new Date();
-  start.setHours(19, 0, 0, 0);
-  if (start.getTime() < Date.now()) {
-    start.setDate(start.getDate() + 1);
-  }
-  return start;
-}
-
-function formatIcsDate(date: Date) {
-  return date.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
-}
-
-function escapeIcsText(value: string) {
-  return value
-    .replace(/\\/g, "\\\\")
-    .replace(/\n/g, "\\n")
-    .replace(/,/g, "\\,")
-    .replace(/;/g, "\\;");
-}
-
-function getActivitySummary(title: string, activities: PlanActivity[]) {
-  if (!activities.length) return "";
-  const lines = activities.map((activity) => {
-    const detail = [activity.time, activity.sets, activity.reps, activity.paceOrLoad].filter(Boolean).join(" | ");
-    return `- ${activity.name}${detail ? `: ${detail}` : ""}`;
-  });
-  return `${title}\n${lines.join("\n")}`;
-}
-
-function getExerciseSummary(exercises: Exercise[]) {
-  if (!exercises.length) return "";
-  const lines = exercises.map((exercise) => {
-    const option = exercise.main;
-    return `- ${option.name}: ${option.sets} sets x ${option.repsPerSet}, ${option.weightGuide}, rest ${option.restSeconds}s. Alternative: ${exercise.alternative.name}`;
-  });
-  return `Workout\n${lines.join("\n")}`;
-}
-
-function buildCalendarDescription(day: DayPlan) {
-  return [
-    day.focus,
-    getActivitySummary("Warm-up", day.warmUp),
-    getExerciseSummary(day.exercises),
-    getActivitySummary("Cooldown", day.coolDown),
-    "Open GymBuddy to check off each exercise.",
-  ]
-    .filter(Boolean)
-    .join("\n\n");
-}
-
-function buildWorkoutCalendarFile(plan: WeeklyPlan, profile: UserProfile) {
-  const calendarStart = getCalendarStartDate();
-  const durationMinutes = getWorkoutDurationMinutes(profile);
-  const events = plan.days
-    .map((day, index) => ({ day, index }))
-    .filter(({ day }) => !day.isRestDay && day.exercises.length > 0)
-    .map(({ day, index }) => {
-      const eventStart = new Date(calendarStart);
-      eventStart.setDate(calendarStart.getDate() + index);
-      const eventEnd = new Date(eventStart.getTime() + durationMinutes * 60 * 1000);
-      const uid = `gymbuddy-week-${plan.week}-day-${index + 1}-${eventStart.getTime()}@gymbuddy.local`;
-
-      return [
-        "BEGIN:VEVENT",
-        `UID:${uid}`,
-        `DTSTAMP:${formatIcsDate(new Date())}`,
-        `DTSTART:${formatIcsDate(eventStart)}`,
-        `DTEND:${formatIcsDate(eventEnd)}`,
-        `SUMMARY:${escapeIcsText(`GymBuddy: ${day.title}`)}`,
-        `DESCRIPTION:${escapeIcsText(buildCalendarDescription(day))}`,
-        "BEGIN:VALARM",
-        "TRIGGER:-PT30M",
-        "ACTION:DISPLAY",
-        `DESCRIPTION:${escapeIcsText("GymBuddy workout starts in 30 minutes")}`,
-        "END:VALARM",
-        "END:VEVENT",
-      ].join("\r\n");
-    });
-
-  return [
-    "BEGIN:VCALENDAR",
-    "VERSION:2.0",
-    "PRODID:-//GymBuddy//Workout Plan//EN",
-    "CALSCALE:GREGORIAN",
-    "METHOD:PUBLISH",
-    `X-WR-CALNAME:${escapeIcsText(`GymBuddy Week ${plan.week}`)}`,
-    ...events,
-    "END:VCALENDAR",
-  ].join("\r\n");
-}
-
-function downloadWorkoutCalendar(plan: WeeklyPlan, profile: UserProfile) {
-  const calendarFile = buildWorkoutCalendarFile(plan, profile);
-  const blob = new Blob([calendarFile], { type: "text/calendar;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = `gymbuddy-week-${plan.week}-workouts.ics`;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
 }
 
 function buildWeekOnePrompt(profile: UserProfile) {
@@ -1859,6 +1763,7 @@ function App() {
   const [aiError, setAiError] = useState(() => readStorage(STORAGE_KEYS.aiError, ""));
   const [monthlyProgress, setMonthlyProgress] = useState<MonthlyProgress>(() => readStorage(STORAGE_KEYS.monthlyProgress, {}));
   const [planArchive, setPlanArchive] = useState<PlanArchive>(() => readStorage<PlanArchive>(STORAGE_KEYS.planArchive, {}));
+  const [planStartDate, setPlanStartDate] = useState(() => readStorage(STORAGE_KEYS.planStartDate, getLocalDateKey()));
   const [reminderSettings, setReminderSettings] = useState<ReminderSettings>(() => normalizeReminderSettings(readStorage<Partial<ReminderSettings>>(STORAGE_KEYS.reminderSettings, initialReminderSettings)));
   const [nutritionPlan, setNutritionPlan] = useState<NutritionPlan | null>(() => readStorage<NutritionPlan | null>(STORAGE_KEYS.nutritionPlan, null));
   const [nutritionSource, setNutritionSource] = useState<NutritionSource>(() => readStorage<NutritionSource>(STORAGE_KEYS.nutritionSource, "idle"));
@@ -1941,6 +1846,10 @@ function App() {
   }, [selectedDayIndex]);
 
   useEffect(() => {
+    writeStorage(STORAGE_KEYS.planStartDate, planStartDate);
+  }, [planStartDate]);
+
+  useEffect(() => {
     if (!weeklyPlan) return;
     setPlanArchive((current) => {
       const next = {
@@ -1949,12 +1858,13 @@ function App() {
           plan: weeklyPlan,
           completion,
           exerciseSelection,
+          selectedDayIndex,
         },
       };
       writeStorage(STORAGE_KEYS.planArchive, next);
       return next;
     });
-  }, [completion, exerciseSelection, weeklyPlan]);
+  }, [completion, exerciseSelection, selectedDayIndex, weeklyPlan]);
 
   useEffect(() => {
     if (["welcome", "onboarding", "loading"].includes(screen)) return;
@@ -2626,11 +2536,14 @@ function App() {
     trackEvent("onboarding_completed", profileAnalytics);
 
     if (cachedPlan && cachedSignature === profileSignature) {
+      const cachedStartDate = readStorage(STORAGE_KEYS.planStartDate, getLocalDateKey());
       setProfile(finalProfile);
       setWeeklyPlan(cachedPlan);
+      setPlanStartDate(cachedStartDate);
       const nextDayIndex = getResumeDayIndex(cachedPlan, completion, selectedDayIndex);
       setSelectedDayIndex(nextDayIndex);
       writeStorage(STORAGE_KEYS.profile, finalProfile);
+      writeStorage(STORAGE_KEYS.planStartDate, cachedStartDate);
       writeStorage(STORAGE_KEYS.aiPrompt, prompt);
       trackEvent("workout_plan_generated", {
         ...profileAnalytics,
@@ -2647,10 +2560,13 @@ function App() {
     setExerciseSelection({});
     setPlanArchive({});
     setSelectedDayIndex(0);
+    const newPlanStartDate = getLocalDateKey();
+    setPlanStartDate(newPlanStartDate);
     writeStorage(STORAGE_KEYS.profile, finalProfile);
     writeStorage(STORAGE_KEYS.completion, {});
     writeStorage(STORAGE_KEYS.exerciseSelection, {});
     writeStorage(STORAGE_KEYS.planArchive, {});
+    writeStorage(STORAGE_KEYS.planStartDate, newPlanStartDate);
     writeStorage(STORAGE_KEYS.aiPrompt, prompt);
     goToScreen("loading");
 
@@ -2761,9 +2677,12 @@ function App() {
       });
     }
     const nextPlan = createAdaptedPlan(checkIn, completedCount);
+    const nextDayIndex = getNextCalendarDayIndex(weeklyPlan, selectedDayIndex);
     setAdaptedPlan(nextPlan);
+    setSelectedDayIndex(nextDayIndex);
     writeStorage(STORAGE_KEYS.checkIn, checkIn);
     writeStorage(STORAGE_KEYS.adaptation, nextPlan);
+    writeStorage(STORAGE_KEYS.selectedDayIndex, nextDayIndex);
     goToScreen("adaptation");
   }
 
@@ -2792,19 +2711,22 @@ function App() {
     setScreen("weekly-plan");
   }
 
-  function openArchivedWeek(week: number) {
+  function openArchivedWeek(week: number, targetScreen: Screen = "weekly-plan") {
     const archiveEntry = planArchive[String(week)];
     if (!archiveEntry) return;
+    const safeDayIndex = Number.isFinite(archiveEntry.selectedDayIndex)
+      ? Math.min(Math.max(archiveEntry.selectedDayIndex ?? 0, 0), archiveEntry.plan.days.length - 1)
+      : getResumeDayIndex(archiveEntry.plan, archiveEntry.completion, 0);
 
     setWeeklyPlan(archiveEntry.plan);
     setCompletion(archiveEntry.completion);
     setExerciseSelection(archiveEntry.exerciseSelection);
-    setSelectedDayIndex(0);
+    setSelectedDayIndex(safeDayIndex);
     writeStorage(STORAGE_KEYS.plan, archiveEntry.plan);
     writeStorage(STORAGE_KEYS.completion, archiveEntry.completion);
     writeStorage(STORAGE_KEYS.exerciseSelection, archiveEntry.exerciseSelection);
-    writeStorage(STORAGE_KEYS.selectedDayIndex, 0);
-    setScreen("weekly-plan");
+    writeStorage(STORAGE_KEYS.selectedDayIndex, safeDayIndex);
+    setScreen(targetScreen);
   }
 
   function openDay(dayIndex: number) {
@@ -2902,11 +2824,13 @@ function App() {
         {screen === "weekly-plan" && (
           <WeeklyPlanScreen
             plan={weeklyPlan}
+            planStartDate={planStartDate}
             profile={profile}
             completion={completion}
             onOpenDay={openDay}
             availableWeeks={Object.keys(planArchive).map(Number)}
             onOpenWeek={openArchivedWeek}
+            onLockedWeek={(lockedWeek) => setHeaderToast(`Week ${lockedWeek} Opens after You finish Week ${lockedWeek - 1}`)}
             resumeDay={resumeDay}
             onStartWorkout={() => openDay(resumeDayIndex)}
           />
@@ -2917,6 +2841,8 @@ function App() {
             completion={completion}
             exerciseSelection={exerciseSelection}
             log={todaysWorkoutLog}
+            currentWeek={weeklyPlan?.week ?? 1}
+            planStartDate={planStartDate}
             activitySummary={todaysActivitySummary}
             onChooseExerciseOption={chooseExerciseOption}
             onToggleItemTimer={toggleWorkoutItemTimer}
@@ -2945,8 +2871,10 @@ function App() {
             checkIn={checkIn}
             completedCount={completedCount}
             currentWeek={weeklyPlan?.week ?? 1}
+            nextDay={todaysPlan}
             weeklyPercent={getWeeklyProgress(weeklyPlan, completion).percent}
             onGenerateNextWeek={handleGenerateNextWeek}
+            onOpenNextDay={() => openDay(selectedDayIndex)}
             onRestart={() => goToScreen("weekly-plan")}
           />
         )}
@@ -2964,12 +2892,19 @@ function App() {
         )}
         {screen === "progress" && (
           <ProgressScreen
+            availableWeeks={Object.keys(planArchive).map(Number)}
             completion={completion}
             exerciseSelection={exerciseSelection}
             monthlyProgress={monthlyProgress}
+            nutritionPlan={nutritionPlan}
             plan={weeklyPlan}
+            planStartDate={planStartDate}
+            profile={profile}
+            proteinLog={proteinLog}
+            waterLog={waterLog}
             workoutLogs={workoutLogs}
-            onOpenDay={openDay}
+            onLockedWeek={(lockedWeek) => setHeaderToast(`Week ${lockedWeek} Opens after You finish Week ${lockedWeek - 1}`)}
+            onOpenWeek={(week) => openArchivedWeek(week, "progress")}
           />
         )}
         {screen === "profile" && (
@@ -3685,13 +3620,9 @@ function HomeScreen({
         <p className="mt-2 text-base font-semibold text-[#CBD5E1]">Walk in confident. Your plan is ready</p>
       </div>
 
-      <button
-        className="rounded-3xl border border-[#334155] bg-gradient-to-br from-[#1E293B] to-[#111827] p-5 text-left shadow-xl shadow-black/20 transition active:scale-[0.99]"
-        onClick={() => (targetDay ? onStartWorkout(homeTarget.index) : onOpenExercise())}
-        type="button"
-      >
+      <section className="rounded-3xl border border-[#334155] bg-gradient-to-br from-[#1E293B] to-[#111827] p-5 text-left shadow-xl shadow-black/20">
         <div className="flex items-center justify-between gap-3">
-          <p className="text-sm font-black uppercase tracking-wide text-[#CBD5E1]">Today&apos;s goal</p>
+          <p className="text-sm font-black uppercase tracking-wide text-[#CBD5E1]">Do this today</p>
           <span className="rounded-full bg-[#273449] px-3 py-1 text-xs font-black text-[#F97316]">{targetDay?.day ?? `Week ${plan.week}`}</span>
         </div>
         <div className="mt-6 flex flex-col items-center">
@@ -3706,56 +3637,29 @@ function HomeScreen({
           <HomeStat value={`${workoutMinutes}`} label="MIN" />
           <HomeStat value={`${weekly.percent}%`} label="WEEK" />
         </div>
-      </button>
+        <button
+          className="mt-5 flex min-h-14 w-full items-center justify-center gap-2 rounded-2xl bg-[#3B82F6] px-5 text-base font-black text-white shadow-xl shadow-blue-950/30 transition active:scale-[0.98]"
+          onClick={() => (targetDay ? onStartWorkout(homeTarget.index) : onOpenExercise())}
+          type="button"
+        >
+          {actionLabel}
+          <Play size={18} />
+        </button>
+      </section>
 
       <section className="rounded-3xl border border-[#334155] bg-[#111827] p-4">
         <div className="flex items-center justify-between gap-3">
-          <h2 className="text-xl font-black text-white">Today&apos;s Focus</h2>
+          <h2 className="text-xl font-black text-white">Today&apos;s basics</h2>
           <button className="rounded-full bg-[#273449] px-3 py-2 text-[#CBD5E1] transition active:scale-[0.98]" onClick={onOpenProgress} type="button" aria-label="Open progress">
             <BarChart3 size={18} />
           </button>
         </div>
         <div className="mt-4 grid gap-3">
-          <HomeProgressItem icon={<Dumbbell size={20} />} label="Workout" percent={goalPercent} value={targetProgress ? `${targetProgress.done}/${targetProgress.total}` : `${weekly.percent}%`} tone="blue" />
           <HomeProgressItem icon={<Utensils size={20} />} label="Protein goal" percent={proteinPercent} value={protein} tone="orange" onClick={onOpenNutrition} />
           <HomeProgressItem icon={<Droplet size={20} />} label="Water goal" percent={waterPercent} value={water} tone="cyan" onClick={onOpenNutrition} />
-          <HomeProgressItem icon={<Timer size={20} />} label="Active" percent={Math.min(100, Math.round((activitySummary.activeSeconds / Math.max(1, workoutMinutes * 60)) * 100))} value={formatDuration(activitySummary.activeSeconds)} tone="green" />
-        </div>
-      </section>
-
-      <section
-        className="relative min-h-[230px] overflow-hidden rounded-3xl border border-[#334155] bg-[#111827] p-4 shadow-xl shadow-black/25"
-        style={{
-          backgroundImage:
-            "linear-gradient(180deg, rgba(15,23,42,0.15), rgba(15,23,42,0.92)), url('https://images.unsplash.com/photo-1517836357463-d25dfeac3438?auto=format&fit=crop&w=900&q=80')",
-          backgroundPosition: "center",
-          backgroundSize: "cover",
-        }}
-      >
-        <div className="absolute right-4 top-4 rounded-full border border-white/70 bg-white/95 px-3 py-1 text-xs font-black !text-[#3B6FE8] shadow-lg shadow-slate-950/15 backdrop-blur">
-          {profile.gymType}
-        </div>
-        <div className="flex h-full min-h-[198px] flex-col justify-end">
-          <p className="text-sm font-black uppercase tracking-wide text-[#CBD5E1]">Recommended for you</p>
-          <h2 className="mt-2 text-2xl font-black leading-tight text-white">{targetDay?.title ?? "Review your week"}</h2>
-          <div className="mt-3 flex items-center gap-4 text-sm font-bold text-[#CBD5E1]">
-            <span className="inline-flex items-center gap-1">
-              <Timer size={16} />
-              {workoutMinutes} min
-            </span>
-            <span className="inline-flex items-center gap-1">
-              <Flame size={16} />
-              {calories} kcal target
-            </span>
-          </div>
-          <button
-            className="mt-5 flex min-h-14 w-full items-center justify-center gap-2 rounded-2xl bg-[#3B82F6] px-5 text-base font-black text-white shadow-xl shadow-blue-950/30 transition active:scale-[0.98]"
-            onClick={() => (targetDay ? onStartWorkout(homeTarget.index) : onOpenExercise())}
-            type="button"
-          >
-            {actionLabel}
-            <Play size={18} />
-          </button>
+          {activitySummary.activeSeconds > 0 && (
+            <HomeProgressItem icon={<Timer size={20} />} label="Active time" percent={Math.min(100, Math.round((activitySummary.activeSeconds / Math.max(1, workoutMinutes * 60)) * 100))} value={formatDuration(activitySummary.activeSeconds)} tone="green" />
+          )}
         </div>
       </section>
     </section>
@@ -3856,20 +3760,24 @@ function HomeProgressItem({
 function WeeklyPlanScreen({
   availableWeeks,
   plan,
+  planStartDate,
   profile,
   completion,
   resumeDay,
   onOpenDay,
   onOpenWeek,
+  onLockedWeek,
   onStartWorkout,
 }: {
   availableWeeks: number[];
   plan: WeeklyPlan | null;
+  planStartDate: string;
   profile: UserProfile;
   completion: ExerciseCompletion;
   resumeDay: DayPlan | null;
   onOpenDay: (dayIndex: number) => void;
   onOpenWeek: (week: number) => void;
+  onLockedWeek: (lockedWeek: number) => void;
   onStartWorkout: () => void;
 }) {
   const resumeProgress = resumeDay ? getDayProgress(resumeDay, completion) : null;
@@ -3877,8 +3785,18 @@ function WeeklyPlanScreen({
   const [focusedDayIndex, setFocusedDayIndex] = useState(initialFocusedIndex);
   const focusedDay = plan?.days[focusedDayIndex] ?? plan?.days[0] ?? null;
   const week = plan?.week ?? 1;
-  const hasPreviousWeek = availableWeeks.includes(week - 1);
-  const hasNextWeek = availableWeeks.includes(week + 1);
+  const maxVisibleWeek = Math.max(4, week, ...availableWeeks);
+  const weekOptions = Array.from({ length: maxVisibleWeek }, (_, index) => index + 1);
+  const resumeCtaLabel = resumeDay?.isRestDay
+    ? "Open Recovery Day"
+    : resumeProgress && resumeProgress.done + resumeProgress.partial > 0
+      ? `Continue ${resumeDay?.day ?? "Workout"}`
+      : `Start ${resumeDay?.day ?? "Workout"}`;
+  const weekSubtitle = resumeDay?.isRestDay
+    ? `${resumeDay.day} recovery`
+    : resumeDay
+      ? `${resumeCtaLabel} next`
+      : `Week ${week} plan`;
 
   useEffect(() => {
     if (!plan) return;
@@ -3887,7 +3805,7 @@ function WeeklyPlanScreen({
 
   return (
     <section className="flex flex-1 flex-col gap-4 p-4 pb-24 pt-3 sm:gap-5 sm:p-5 sm:pb-28 sm:pt-4">
-      <ScreenTitle icon={<Wand2 size={22} />} title={`Your Week ${week} Plan`} subtitle={week === 1 ? "Start with Day 1" : `Continue Week ${week}`} />
+      <ScreenTitle icon={<Wand2 size={22} />} title={`Your Week ${week} Plan`} subtitle={weekSubtitle} />
       <div className="rounded-3xl border border-[#334155] bg-[#273449] p-4 shadow-xl shadow-black/10 sm:p-5">
         <div className="flex items-start justify-between gap-3">
           <div>
@@ -3907,26 +3825,39 @@ function WeeklyPlanScreen({
         </div>
       </div>
 
-      {(hasPreviousWeek || hasNextWeek) && (
-        <div className="grid grid-cols-2 gap-2">
-          <button
-            className="min-h-11 rounded-2xl border border-[#D8E0EC] bg-white px-4 text-sm font-black text-[#64748B] disabled:opacity-40"
-            disabled={!hasPreviousWeek}
-            onClick={() => onOpenWeek(week - 1)}
-            type="button"
-          >
-            Previous Week
-          </button>
-          <button
-            className="min-h-11 rounded-2xl bg-[#3B6FE8] px-4 text-sm font-black text-white disabled:opacity-40"
-            disabled={!hasNextWeek}
-            onClick={() => onOpenWeek(week + 1)}
-            type="button"
-          >
-            Next Week
-          </button>
-        </div>
-      )}
+      <div className="flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        {weekOptions.map((weekOption) => {
+          const isActive = weekOption === week;
+          const isAvailable = availableWeeks.includes(weekOption) || isActive;
+          return (
+            <button
+              aria-disabled={!isAvailable}
+              className={`min-h-11 min-w-[96px] rounded-2xl border px-4 text-sm font-black transition active:scale-[0.98] ${
+                isActive
+                  ? "border-[#3B82F6] bg-[#3B82F6] text-white shadow-lg shadow-blue-200"
+                  : isAvailable
+                    ? "border-[#D8E0EC] bg-white text-[#64748B]"
+                    : "border-[#E5EAF3] bg-[#F1F5F9] text-[#94A3B8]"
+              }`}
+              key={weekOption}
+              onClick={() => {
+                if (isActive) return;
+                if (!isAvailable) {
+                  onLockedWeek(weekOption);
+                  return;
+                }
+                onOpenWeek(weekOption);
+              }}
+              type="button"
+            >
+              <span className="inline-flex items-center justify-center gap-1.5">
+                {!isAvailable && <Lock size={14} />}
+                Week {weekOption}
+              </span>
+            </button>
+          );
+        })}
+      </div>
 
       {resumeDay && (
         <button
@@ -3957,21 +3888,22 @@ function WeeklyPlanScreen({
         </button>
       )}
 
-      {plan && <CalendarExportCard plan={plan} profile={profile} />}
-
       {plan && <DayChipNavigator activeIndex={focusedDayIndex} completion={completion} days={plan.days} onSelectDay={setFocusedDayIndex} />}
 
       {focusedDay && (
         <DayPlanCard
           completion={completion}
           day={focusedDay}
+          dayIndex={focusedDayIndex}
+          currentWeek={week}
+          planStartDate={planStartDate}
           gymType={profile.gymType}
           onOpen={() => onOpenDay(focusedDayIndex)}
         />
       )}
 
       <button className="mt-1 flex min-h-[3.25rem] w-full items-center justify-center gap-2 rounded-2xl bg-[#3B82F6] px-5 font-black text-white shadow-xl shadow-blue-950/20 sm:mt-2 sm:min-h-14" onClick={onStartWorkout} type="button">
-        {resumeDay?.isRestDay ? "Open Recovery Day" : `Continue ${resumeDay?.day ?? "Workout"}`}
+        {resumeCtaLabel}
         <ChevronRight size={20} />
       </button>
     </section>
@@ -4027,42 +3959,25 @@ function DayChipNavigator({
   );
 }
 
-function CalendarExportCard({ plan, profile }: { plan: WeeklyPlan; profile: UserProfile }) {
-  return (
-    <div className="rounded-2xl border border-[#334155] bg-[#0F172A] p-3">
-      <div className="flex items-start gap-3">
-        <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[#273449] text-[#CBD5E1]">
-          <CalendarDays size={18} />
-        </div>
-        <div className="min-w-0 flex-1">
-          <p className="text-xs font-black uppercase tracking-wide text-[#F97316]">Optional</p>
-          <h3 className="mt-1 text-sm font-black text-white">Add workouts to calendar</h3>
-        </div>
-      </div>
-      <button
-        className="mt-3 flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl border border-[#334155] bg-[#1E293B] px-4 text-sm font-black text-[#CBD5E1]"
-        onClick={() => downloadWorkoutCalendar(plan, profile)}
-        type="button"
-      >
-        <CalendarDays size={18} />
-        Download calendar file
-      </button>
-    </div>
-  );
-}
-
 function DayPlanCard({
   day,
+  dayIndex,
+  currentWeek,
+  planStartDate,
   gymType,
   completion,
   onOpen,
 }: {
   day: DayPlan;
+  dayIndex: number;
+  currentWeek: number;
+  planStartDate: string;
   gymType: UserProfile["gymType"];
   completion: ExerciseCompletion;
   onOpen: () => void;
 }) {
   const progress = getDayProgress(day, completion);
+  const dateLabel = getWorkoutDateLabel(dayIndex, currentWeek, planStartDate);
 
   return (
     <button
@@ -4075,6 +3990,7 @@ function DayPlanCard({
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className={`text-sm font-black ${day.isRestDay ? "text-[#CBD5E1]" : "text-[#F97316]"}`}>{day.day}</p>
+          <p className="mt-0.5 text-xs font-black text-[#94A3B8]">{dateLabel}</p>
           <h3 className="mt-1 text-lg font-black text-[#FFFFFF]">{day.title}</h3>
         </div>
         {progress.isComplete ? (
@@ -4108,6 +4024,8 @@ function TodayWorkoutScreen({
   completion,
   exerciseSelection,
   log,
+  currentWeek,
+  planStartDate,
   activitySummary,
   onChooseExerciseOption,
   onToggleItemTimer,
@@ -4122,6 +4040,8 @@ function TodayWorkoutScreen({
   completion: ExerciseCompletion;
   exerciseSelection: ExerciseSelection;
   log: DailyWorkoutLog;
+  currentWeek: number;
+  planStartDate: string;
   activitySummary: ReturnType<typeof getWorkoutActivitySummary>;
   onChooseExerciseOption: (id: string, selectedOption: "main" | "alternative") => void;
   onToggleItemTimer: (day: DayPlan, itemId: string) => void;
@@ -4145,12 +4065,13 @@ function TodayWorkoutScreen({
   const upcomingItem = currentIndex >= 0 ? queue[currentIndex + 1] : null;
   const dayProgress = getDayProgress(day, completion);
   const currentPosition = currentItem ? currentIndex + 1 : queue.length;
+  const workoutDateLabel = getWorkoutDateLabel(getDayIndexFromLabel(day.day), currentWeek, planStartDate);
 
   if (day.isRestDay) {
     return (
       <section className="flex flex-1 flex-col gap-4 p-4 pb-24 pt-3 sm:gap-5 sm:p-5 sm:pb-28 sm:pt-4">
         <WorkoutBackButton onClick={onBackToWeek} />
-        <ScreenTitle icon={<HeartPulse size={22} />} title="Recovery Day" subtitle={`${day.day}: ${day.title}`} />
+        <ScreenTitle icon={<HeartPulse size={22} />} title="Recovery Day" subtitle={`${day.day} • ${workoutDateLabel} • ${day.title}`} />
         <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4 sm:p-5">
           <p className="text-lg font-black text-slate-950">{day.focus}</p>
           <p className="mt-2 leading-7 text-slate-600">Keep it light today. Rest is part of the plan, especially for beginners.</p>
@@ -4175,13 +4096,7 @@ function TodayWorkoutScreen({
   return (
     <section className="flex flex-1 flex-col gap-4 p-4 pb-24 pt-3 sm:gap-5 sm:p-5 sm:pb-28 sm:pt-4">
       <WorkoutBackButton onClick={onBackToWeek} />
-      <ScreenTitle icon={<Dumbbell size={22} />} title="Today's Workout" subtitle={`${day.day}: ${day.title}`} />
-
-      <DailyWorkoutLogCard
-        activitySummary={activitySummary}
-        log={log}
-        onWeightChange={(key, value) => onUpdateWorkoutWeight(day, key, value)}
-      />
+      <ScreenTitle icon={<Dumbbell size={22} />} title="Today's Workout" subtitle={`${day.day} • ${workoutDateLabel} • ${day.title}`} />
 
       <section className="rounded-3xl border border-[#334155] bg-[#1E293B] p-4">
         <div className="flex items-center justify-between gap-3">
@@ -4281,30 +4196,6 @@ function SimpleWorkoutSection({ title, subtitle, children }: { title: string; su
         <p className="text-sm font-semibold text-[#CBD5E1]">{subtitle}</p>
       </div>
       <div className="grid gap-3">{children}</div>
-    </section>
-  );
-}
-
-function DailyWorkoutLogCard({
-  activitySummary,
-  log,
-  onWeightChange,
-}: {
-  activitySummary: ReturnType<typeof getWorkoutActivitySummary>;
-  log: DailyWorkoutLog;
-  onWeightChange: (key: "beforeWeight" | "afterWeight", value: string) => void;
-}) {
-  return (
-    <section className="rounded-3xl border border-[#334155] bg-[#1E293B] p-4">
-      <p className="text-sm font-black uppercase tracking-wide text-[#F97316]">Today&apos;s session</p>
-      <div className="mt-3">
-        <WeightInput label="Before" value={log.beforeWeight} onChange={(value) => onWeightChange("beforeWeight", value)} />
-      </div>
-      <div className="mt-3 grid grid-cols-2 gap-2">
-        <MetricTile label="After weight" value={log.afterWeight ? `${log.afterWeight} kg` : "Check-in"} />
-        <MetricTile label="Active time" value={formatDuration(activitySummary.activeSeconds)} />
-        <MetricTile label="Rest time" value={formatDuration(activitySummary.restSeconds)} />
-      </div>
     </section>
   );
 }
@@ -4664,31 +4555,49 @@ function ProgressBar({ percent, tone = "green" }: { percent: number; tone?: "gre
 }
 
 function ProgressScreen({
+  availableWeeks,
   plan,
+  planStartDate,
+  profile,
   completion,
   exerciseSelection,
   monthlyProgress,
+  nutritionPlan,
+  proteinLog,
+  waterLog,
   workoutLogs,
-  onOpenDay,
+  onLockedWeek,
+  onOpenWeek,
 }: {
+  availableWeeks: number[];
   plan: WeeklyPlan | null;
+  planStartDate: string;
+  profile: UserProfile;
   completion: ExerciseCompletion;
   exerciseSelection: ExerciseSelection;
   monthlyProgress: MonthlyProgress;
+  nutritionPlan: NutritionPlan | null;
+  proteinLog: Record<string, number>;
+  waterLog: Record<string, number>;
   workoutLogs: WorkoutLogs;
-  onOpenDay: (dayIndex: number) => void;
+  onLockedWeek: (lockedWeek: number) => void;
+  onOpenWeek: (week: number) => void;
 }) {
   const weekly = getWeeklyProgress(plan, completion);
   const [view, setView] = useState<"weekly" | "daily">("weekly");
   const [selectedProgressDayIndex, setSelectedProgressDayIndex] = useState<number | null>(null);
-  const progressNudge = getProgressNudge(plan, completion);
-  const partiallyStartedDay = getPartiallyStartedDay(plan, completion);
-  const actionTargetDay = getProgressActionTargetDay(plan, completion);
-  const actionTargetIndex = actionTargetDay && plan ? plan.days.findIndex((day) => day.day === actionTargetDay.day) : -1;
   const performanceRows = getExercisePerformanceRows(plan, workoutLogs, exerciseSelection, completion);
+  const currentWeek = plan?.week ?? 1;
+  const maxVisibleWeek = Math.max(4, currentWeek, ...availableWeeks);
+  const weekOptions = Array.from({ length: maxVisibleWeek }, (_, index) => index + 1);
 
   return (
     <section className="flex flex-1 flex-col gap-4 p-4 pb-20 pt-3 sm:gap-5 sm:p-5 sm:pt-4 sm:pb-24">
+      {view === "daily" && (
+        <button className="w-fit rounded-full bg-[#EAF0FF] px-3 py-1.5 text-xs font-black text-[#3B6FE8]" onClick={() => setView("weekly")} type="button">
+          Back
+        </button>
+      )}
       <ScreenTitle
         icon={<BarChart3 size={22} />}
         title={view === "weekly" ? "Progress" : "Daily Progress"}
@@ -4711,53 +4620,66 @@ function ProgressScreen({
             <p className="mt-4 text-sm font-black text-[#CBD5E1]">Tap to view daily progress</p>
           </button>
 
-          <ProgressNudgeCard
-            actionLabel={actionTargetDay ? `${partiallyStartedDay ? "Continue" : "Start"} ${actionTargetDay.day}` : "View daily progress"}
-            message={progressNudge}
-            onAction={() => {
-              if (actionTargetIndex >= 0) {
-                onOpenDay(actionTargetIndex);
-                return;
-              }
-              setView("daily");
-            }}
-          />
-
           <div className="grid grid-cols-3 gap-3">
             <MetricTile label="Workout days" value={String(weekly.workoutDays)} />
             <MetricTile label="Partial" value={String(weekly.partialItems)} />
             <MetricTile label="Done" value={String(weekly.doneItems)} />
           </div>
 
-          <ExercisePerformancePanel rows={performanceRows} />
+          <NutritionHistoryCalendar
+            nutritionPlan={nutritionPlan}
+            planStartDate={planStartDate}
+            profile={profile}
+            proteinLog={proteinLog}
+            waterLog={waterLog}
+          />
 
-          <button
-            className="rounded-3xl border border-[#334155] bg-[#273449] p-4 text-left transition active:scale-[0.99]"
-            onClick={() => setView("daily")}
-            type="button"
-          >
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-sm font-black uppercase tracking-wide text-[#F97316]">Daily breakdown</p>
-                <h3 className="mt-1 text-xl font-black text-white">See each day&apos;s progress</h3>
-              </div>
-              <ChevronRight className="shrink-0 text-[#F97316]" size={24} />
-            </div>
-          </button>
+          <ExercisePerformancePanel rows={performanceRows} />
 
           <MonthlyProgressCalendar completion={completion} history={monthlyProgress} plan={plan} />
         </>
       ) : (
         <section className="grid gap-3">
-          <button className="w-fit rounded-full bg-[#273449] px-4 py-2 text-sm font-black text-[#F97316]" onClick={() => setView("weekly")} type="button">
-            Back to week
-          </button>
+          <div className="flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            {weekOptions.map((weekOption) => {
+              const isActive = weekOption === currentWeek;
+              const isAvailable = availableWeeks.includes(weekOption) || isActive;
+              return (
+                <button
+                  aria-disabled={!isAvailable}
+                  className={`min-h-11 min-w-[96px] rounded-2xl border px-4 text-sm font-black transition active:scale-[0.98] ${
+                    isActive
+                      ? "border-[#3B82F6] bg-[#3B82F6] text-white shadow-lg shadow-blue-200"
+                      : isAvailable
+                        ? "border-[#D8E0EC] bg-white text-[#64748B]"
+                        : "border-[#E5EAF3] bg-[#F1F5F9] text-[#94A3B8]"
+                  }`}
+                  key={weekOption}
+                  onClick={() => {
+                    if (isActive) return;
+                    if (!isAvailable) {
+                      onLockedWeek(weekOption);
+                      return;
+                    }
+                    onOpenWeek(weekOption);
+                  }}
+                  type="button"
+                >
+                  <span className="inline-flex items-center justify-center gap-1.5">
+                    {!isAvailable && <Lock size={14} />}
+                    Week {weekOption}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
           {plan?.days.map((day, dayIndex) => {
             const progress = getDayProgress(day, completion);
             const log = getWorkoutLog(workoutLogs, day);
             const summary = getWorkoutActivitySummary(day, log, completion);
             const isSelected = selectedProgressDayIndex === dayIndex;
             const dayPerformanceRows = getDayExercisePerformanceRows(day, log, exerciseSelection, completion);
+            const dateLabel = getWorkoutDateLabel(dayIndex, currentWeek, planStartDate);
             return (
               <article className="rounded-3xl border border-[#334155] bg-[#1E293B] p-4" key={day.day}>
                 <button
@@ -4767,6 +4689,7 @@ function ProgressScreen({
                 >
                   <span>
                     <span className="text-sm font-black text-[#F97316]">{day.day}</span>
+                    <span className="ml-2 text-xs font-black text-[#94A3B8]">{dateLabel}</span>
                     <span className="mt-1 block font-black text-white">{day.title}</span>
                   </span>
                   <span className="flex items-center gap-2">
@@ -4910,25 +4833,147 @@ function DayExerciseRecords({ rows }: { rows: ExercisePerformanceRow[] }) {
   );
 }
 
-function getProgressActionTargetDay(plan: WeeklyPlan | null, completion: ExerciseCompletion) {
-  if (!plan) return null;
-  return getPartiallyStartedDay(plan, completion) ?? getReminderTargetDay(plan, completion);
+function getPlanTimelineDateKeys(planStartDate: string, days = 28) {
+  const startDate = getDateFromLocalKey(planStartDate);
+  return Array.from({ length: days }, (_, index) => {
+    const date = new Date(startDate);
+    date.setDate(startDate.getDate() + index);
+    return {
+      key: getLocalDateKey(date),
+      label: date.toLocaleDateString("en-IN", { weekday: "short" }),
+      fullLabel: date.toLocaleDateString("en-IN", { day: "numeric", month: "short", weekday: "short" }),
+      day: date.getDate(),
+    };
+  });
 }
 
-function ProgressNudgeCard({ actionLabel, message, onAction }: { actionLabel: string; message: string; onAction: () => void }) {
+function getDayIndexFromLabel(dayLabel: string) {
+  const dayNumber = Number(dayLabel.replace(/\D/g, ""));
+  return Number.isFinite(dayNumber) && dayNumber > 0 ? dayNumber - 1 : 0;
+}
+
+function getDateFromLocalKey(dateKey: string) {
+  const [year, month, day] = dateKey.split("-").map(Number);
+  if (!year || !month || !day) return new Date();
+  return new Date(year, month - 1, day);
+}
+
+function getWorkoutDateLabel(dayIndex: number, week = 1, planStartDate = getLocalDateKey()) {
+  const date = getDateFromLocalKey(planStartDate);
+  const weekOffset = Math.max(0, week - 1) * 7;
+  date.setDate(date.getDate() + weekOffset + Math.max(0, dayIndex));
+  return date.toLocaleDateString("en-IN", { day: "numeric", month: "short", weekday: "short" });
+}
+
+function NutritionHistoryCalendar({
+  nutritionPlan,
+  planStartDate,
+  profile,
+  proteinLog,
+  waterLog,
+}: {
+  nutritionPlan: NutritionPlan | null;
+  planStartDate: string;
+  profile: UserProfile;
+  proteinLog: Record<string, number>;
+  waterLog: Record<string, number>;
+}) {
+  const fallbackPlan = nutritionPlan ?? createFallbackNutritionPlan(profile);
+  const fallbackProteinTarget = getProteinTarget(profile);
+  const proteinGoal = fallbackPlan.macros?.protein ?? fallbackProteinTarget?.high ?? 0;
+  const waterGoal = fallbackPlan.macros?.waterLiters ?? getDailyWaterToDrinkLiters(profile);
+  const days = getPlanTimelineDateKeys(planStartDate, 28);
+  const todayKey = getLocalDateKey();
+  const defaultSelectedKey = days.find((day) => day.key === todayKey)?.key ?? days[0]?.key ?? "";
+  const [selectedDateKey, setSelectedDateKey] = useState(defaultSelectedKey);
+  const selectedDay = days.find((day) => day.key === selectedDateKey) ?? days[days.length - 1];
+  const selectedWater = Number(waterLog[selectedDay?.key ?? ""] ?? 0);
+  const selectedProtein = Number(proteinLog[selectedDay?.key ?? ""] ?? 0);
+
+  useEffect(() => {
+    if (!days.some((day) => day.key === selectedDateKey)) setSelectedDateKey(defaultSelectedKey);
+  }, [defaultSelectedKey, days, selectedDateKey]);
+
   return (
-    <section className="rounded-3xl border border-[#334155] bg-[#0F172A] p-4">
-      <p className="text-xs font-black uppercase tracking-wide text-[#ABD600]">Next</p>
-      <p className="mt-2 text-xl font-black leading-tight text-white">{message}</p>
-      <button
-        className="mt-4 flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl bg-[#3B6FE8] px-4 text-sm font-black text-white shadow-lg shadow-blue-950/25 transition active:scale-[0.98]"
-        onClick={onAction}
-        type="button"
-      >
-        {actionLabel}
-        <ChevronRight size={18} />
-      </button>
+    <section className="rounded-3xl border border-[#334155] bg-[#1E293B] p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-black uppercase tracking-wide text-[#F97316]">Intake calendar</p>
+          <h3 className="mt-1 text-xl font-black text-white">Water + protein</h3>
+        </div>
+        <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-[#3B82F6] text-white">
+          <Droplet size={22} />
+        </div>
+      </div>
+
+      <div className="-mx-1 mt-4 flex gap-2 overflow-x-auto px-1 pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        {days.map((day) => {
+          const water = Number(waterLog[day.key] ?? 0);
+          const protein = Number(proteinLog[day.key] ?? 0);
+          const waterPercent = waterGoal ? Math.min(100, Math.round((water / waterGoal) * 100)) : 0;
+          const proteinPercent = proteinGoal ? Math.min(100, Math.round((protein / proteinGoal) * 100)) : 0;
+          const isComplete = waterPercent >= 100 && proteinPercent >= 100;
+          const hasAnyLog = water > 0 || protein > 0;
+
+          return (
+            <button
+              className={`w-[76px] shrink-0 rounded-2xl border p-2 text-center transition active:scale-[0.98] ${
+                isComplete
+                  ? "border-[#22C55E] bg-[#DCFCE7]"
+                  : hasAnyLog
+                    ? "border-[#3B82F6] bg-[#EFF6FF]"
+                    : "border-[#334155] bg-[#0F172A]"
+              } ${selectedDateKey === day.key ? "ring-2 ring-[#3B82F6] ring-offset-2 ring-offset-[#1E293B]" : ""}`}
+              onClick={() => setSelectedDateKey(day.key)}
+              type="button"
+              key={day.key}
+              title={`${water.toFixed(1)}L water, ${protein}g protein`}
+            >
+              <p className={`text-[10px] font-black ${hasAnyLog ? "text-[#1E3A8A]" : "text-[#94A3B8]"}`}>{day.label}</p>
+              <p className={`mt-1 text-sm font-black ${hasAnyLog ? "text-[#111827]" : "text-white"}`}>{day.day}</p>
+              <div className="mt-2 grid gap-1">
+                <NutritionMiniBar percent={waterPercent} tone="water" />
+                <NutritionMiniBar percent={proteinPercent} tone="protein" />
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
+      {selectedDay && (
+        <div className="mt-3 rounded-2xl border border-[#D8E0EC] bg-white p-3">
+          <p className="text-xs font-black uppercase tracking-wide text-[#64748B]">{selectedDay.fullLabel}</p>
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            <div className="rounded-xl bg-[#EFF6FF] p-3">
+              <p className="text-xs font-black text-[#3B82F6]">Water</p>
+              <p className="mt-1 text-lg font-black text-[#111827]">{selectedWater.toFixed(1)}L</p>
+              <p className="text-[11px] font-bold text-[#64748B]">Goal {waterGoal.toFixed(1)}L</p>
+            </div>
+            <div className="rounded-xl bg-[#FFF7ED] p-3">
+              <p className="text-xs font-black text-[#F97316]">Protein</p>
+              <p className="mt-1 text-lg font-black text-[#111827]">{selectedProtein}g</p>
+              <p className="text-[11px] font-bold text-[#64748B]">Goal {proteinGoal || "-"}g</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="mt-4 grid grid-cols-2 gap-2 text-xs font-bold text-[#CBD5E1]">
+        <CalendarLegendDot className="bg-[#3B82F6]" label="Water" />
+        <CalendarLegendDot className="bg-[#F97316]" label="Protein" />
+      </div>
     </section>
+  );
+}
+
+function NutritionMiniBar({ percent, tone }: { percent: number; tone: "water" | "protein" }) {
+  const safePercent = Math.min(100, Math.max(0, percent));
+  const color = safePercent >= 100 ? "bg-[#22C55E]" : tone === "water" ? "bg-[#3B82F6]" : "bg-[#F97316]";
+
+  return (
+    <div className="h-1.5 overflow-hidden rounded-full bg-[#CBD5E1]/50">
+      <div className={`h-full rounded-full ${color}`} style={{ width: `${safePercent}%` }} />
+    </div>
   );
 }
 
@@ -5680,7 +5725,7 @@ function BottomNav({
 }) {
   const items = [
     { id: "home" as const, label: "Home", icon: House },
-    { id: "exercise" as const, label: "Exercise", icon: Dumbbell },
+    { id: "exercise" as const, label: "Workout", icon: Dumbbell },
     { id: "nutrition" as const, label: "Nutrition", icon: Apple },
     { id: "progress" as const, label: "Progress", icon: BarChart3 },
   ];
@@ -5754,14 +5799,20 @@ function CheckInScreen({
     <section className="flex flex-1 flex-col gap-4 p-4 pb-24 pt-3 sm:gap-5 sm:p-5 sm:pb-28 sm:pt-4">
       <ScreenTitle icon={<HeartPulse size={22} />} title="Workout Check-In" subtitle="Quick answers so next week can adjust." />
       <section className="rounded-3xl border border-[#334155] bg-[#1E293B] p-4">
-        <p className="text-sm font-black uppercase tracking-wide text-[#F97316]">Activity summary</p>
+        <p className="text-sm font-black uppercase tracking-wide text-[#F97316]">Session summary</p>
         <div className="mt-3 grid grid-cols-2 gap-3">
           <MetricTile label="Warm-up" value={formatDuration(activitySummary.warmUpSeconds)} />
           <MetricTile label="Exercise" value={formatDuration(activitySummary.workoutSeconds)} />
           <MetricTile label="Cooldown" value={formatDuration(activitySummary.coolDownSeconds)} />
           <MetricTile label="Active total" value={formatDuration(activitySummary.activeSeconds)} />
           <MetricTile label="Rest time" value={formatDuration(activitySummary.restSeconds)} />
+          <MetricTile label="After weight" value={log.afterWeight ? `${log.afterWeight} kg` : "Optional"} />
         </div>
+        {day && !day.isRestDay && (
+          <div className="mt-3">
+            <WeightInput label="After" value={log.afterWeight} onChange={(value) => onUpdateWorkoutWeight(day, "afterWeight", value)} />
+          </div>
+        )}
       </section>
       <SelectField label="Did you complete today&apos;s workout?" value={checkIn.completionStatus} onChange={(value) => setCheckIn({ ...checkIn, completionStatus: value as WorkoutCheckIn["completionStatus"] })} options={["Completed", "Partly completed", "Skipped"]} />
       <SelectField label="How difficult was it?" value={checkIn.difficulty} onChange={(value) => setCheckIn({ ...checkIn, difficulty: value as WorkoutCheckIn["difficulty"] })} options={["Easy", "Manageable", "Hard"]} />
@@ -5780,15 +5831,6 @@ function CheckInScreen({
         />
       )}
       <SelectField label="Confidence for next workout" value={checkIn.confidence} onChange={(value) => setCheckIn({ ...checkIn, confidence: value as WorkoutCheckIn["confidence"] })} options={["Low", "Medium", "High"]} />
-      {day && !day.isRestDay && (
-        <section className="rounded-3xl border border-[#334155] bg-[#1E293B] p-4">
-          <p className="text-sm font-black uppercase tracking-wide text-[#F97316]">After workout weight</p>
-          <p className="mt-1 text-sm font-semibold leading-6 text-[#CBD5E1]">This updates today&apos;s calorie target.</p>
-          <div className="mt-3">
-            <WeightInput label="After" value={log.afterWeight} onChange={(value) => onUpdateWorkoutWeight(day, "afterWeight", value)} />
-          </div>
-        </section>
-      )}
       <button className="mt-auto flex min-h-[3.25rem] w-full items-center justify-center gap-2 rounded-2xl bg-[#40B5AD] px-5 font-black text-slate-950 shadow-xl shadow-teal-200 sm:min-h-14" onClick={onSave} type="button">
         Save Check-In
         <CheckCircle2 size={20} />
@@ -5802,23 +5844,30 @@ function AdaptationScreen({
   checkIn,
   completedCount,
   currentWeek,
+  nextDay,
   weeklyPercent,
   onGenerateNextWeek,
+  onOpenNextDay,
   onRestart,
 }: {
   adaptedPlan: string;
   checkIn: WorkoutCheckIn;
   completedCount: number;
   currentWeek: number;
+  nextDay: DayPlan | null;
   weeklyPercent: number;
   onGenerateNextWeek: () => void;
+  onOpenNextDay: () => void;
   onRestart: () => void;
 }) {
   const nextWeek = currentWeek + 1;
+  const nextDayLabel = nextDay?.isRestDay
+    ? `Open Week ${currentWeek} ${nextDay.day} Recovery`
+    : `Start Week ${currentWeek} ${nextDay?.day ?? "Next Day"} Exercise`;
 
   return (
     <section className="flex flex-1 flex-col gap-4 p-4 pt-3 sm:gap-5 sm:p-5 sm:pt-4">
-      <ScreenTitle icon={<Sparkles size={22} />} title="Next Week Adaptation" subtitle="Based on your completion rate and check-in." />
+      <ScreenTitle icon={<Sparkles size={22} />} title="Check-In Saved" subtitle="Your next step is ready" />
       <div className="rounded-3xl bg-[#F97316] p-4 text-[#FFFFFF] sm:p-5">
         <p className="text-sm font-black uppercase tracking-wide text-cyan-100">Week {currentWeek} summary</p>
         <h2 className="mt-2 text-4xl font-black sm:text-5xl">{weeklyPercent}%</h2>
@@ -5836,8 +5885,19 @@ function AdaptationScreen({
         <p className="mt-2 text-lg font-bold leading-8 text-[#FFFFFF]">{adaptedPlan}</p>
       </div>
 
-      <button className="flex min-h-[3.25rem] w-full items-center justify-center gap-2 rounded-2xl bg-[#22C55E] px-5 font-black text-[#FFFFFF] shadow-xl shadow-emerald-950/30 sm:min-h-14" onClick={onGenerateNextWeek} type="button">
-        Generate Week {nextWeek}
+      {nextDay && (
+        <button className="flex min-h-[3.25rem] w-full items-center justify-center gap-2 rounded-2xl bg-[#3B82F6] px-5 font-black text-white shadow-xl shadow-blue-200/60 sm:min-h-14" onClick={onOpenNextDay} type="button">
+          {nextDayLabel}
+          <ChevronRight size={20} />
+        </button>
+      )}
+
+      <button
+        className="flex min-h-[3.25rem] w-full items-center justify-center gap-2 rounded-2xl bg-[#22C55E] px-5 font-black text-[#FFFFFF] shadow-xl shadow-emerald-200/60 sm:min-h-14"
+        onClick={onGenerateNextWeek}
+        type="button"
+      >
+        Generate Week {nextWeek} Plan
         <ChevronRight size={20} />
       </button>
 
