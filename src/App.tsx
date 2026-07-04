@@ -1884,6 +1884,7 @@ function App() {
   const [lastSyncedAt, setLastSyncedAt] = useState("");
   const [cloudLoadedFor, setCloudLoadedFor] = useState("");
   const appOpenedTracked = useRef(false);
+  const lastTrackedScreen = useRef("");
 
   const todaysPlan = weeklyPlan?.days[selectedDayIndex] ?? weeklyPlan?.days[0] ?? null;
   const todaysWorkoutLog = getWorkoutLog(workoutLogs, todaysPlan, profile.weight);
@@ -1905,6 +1906,17 @@ function App() {
       auth_status: authStatus,
     });
   }, [authStatus, screen, weeklyPlan]);
+
+  useEffect(() => {
+    if (lastTrackedScreen.current === screen) return;
+    lastTrackedScreen.current = screen;
+    trackEvent("screen_viewed", {
+      screen,
+      main_tab: activeMainTab,
+      has_saved_plan: Boolean(weeklyPlan),
+      week: weeklyPlan?.week ?? null,
+    });
+  }, [activeMainTab, screen, weeklyPlan]);
 
   useEffect(() => {
     if (!session?.user.id) return;
@@ -2189,6 +2201,11 @@ function App() {
     const nextLog = { ...waterLog, [todayKey]: nextAmount };
     setWaterLog(nextLog);
     writeStorage(STORAGE_KEYS.waterIntake, nextLog);
+    trackEvent("water_logged", {
+      amount_ml: ml,
+      total_liters_today: nextAmount,
+      goal_liters: waterGoal,
+    });
   }
 
   function logProteinIntake(grams: number) {
@@ -2198,6 +2215,11 @@ function App() {
     const nextLog = { ...proteinLog, [todayKey]: nextAmount };
     setProteinLog(nextLog);
     writeStorage(STORAGE_KEYS.proteinIntake, nextLog);
+    trackEvent("protein_logged", {
+      amount_grams: grams,
+      total_grams_today: nextAmount,
+      goal_grams: nutritionPlan?.macros?.protein ?? null,
+    });
   }
 
   async function refreshNutritionPlan(nextProfile = profile, forceRefresh = false, nutritionWeightLog = weightLog) {
@@ -2674,6 +2696,13 @@ function App() {
     const nextMonthlyProgress = upsertMonthlyProgress(monthlyProgress, weeklyPlan, next);
     setMonthlyProgress(nextMonthlyProgress);
     writeStorage(STORAGE_KEYS.monthlyProgress, nextMonthlyProgress);
+    if (todaysPlan) {
+      trackEvent("exercise_status_updated", {
+        ...getWorkoutAnalyticsProperties(todaysPlan, weeklyPlan, next),
+        item_id: id,
+        status,
+      });
+    }
 
     if (status === "Done") {
       const rawItemId = id.includes(":") ? id.slice(id.indexOf(":") + 1) : id;
@@ -2792,6 +2821,11 @@ function App() {
   }
 
   function navigateMainTab(tab: MainTab) {
+    trackEvent("navigation_tab_clicked", {
+      tab,
+      from_screen: screen,
+      week: weeklyPlan?.week ?? null,
+    });
     if (tab === "home") setScreen("home");
     if (tab === "exercise") setScreen("weekly-plan");
     if (tab === "nutrition") setScreen("nutrition");
@@ -2823,7 +2857,14 @@ function App() {
           </button>
         )}
 
-        {screen === "welcome" && <WelcomeScreen onStart={() => goToScreen("onboarding")} />}
+        {screen === "welcome" && (
+          <WelcomeScreen
+            onStart={() => {
+              trackEvent("onboarding_started");
+              goToScreen("onboarding");
+            }}
+          />
+        )}
         {screen === "onboarding" && (
           <OnboardingScreen profile={profile} updateProfile={updateProfile} onBack={goBack} onSubmit={handleGeneratePlan} />
         )}
