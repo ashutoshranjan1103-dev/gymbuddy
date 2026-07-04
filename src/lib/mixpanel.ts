@@ -16,7 +16,8 @@ function cleanProperties(properties: EventProperties = {}) {
 }
 
 export function initMixpanel() {
-  if (isInitialized || !token) return false;
+  if (isInitialized) return true;
+  if (!token) return false;
 
   mixpanel.init(token, {
     debug: import.meta.env.DEV,
