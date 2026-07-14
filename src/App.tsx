@@ -298,9 +298,11 @@ const STORAGE_KEYS = {
   weightLog: "gymbuddy:weekly-weight-log",
   workoutLogs: "gymbuddy:workout-logs",
   planArchive: "gymbuddy:plan-archive",
+  progressStorageVersion: "gymbuddy:progress-storage-version",
 };
 
 const NUTRITION_TARGET_VERSION = "drink-water-standard-v3";
+const MANUAL_PROGRESS_STORAGE_VERSION = "manual-progress-inputs-v1";
 
 const initialReminderSettings: ReminderSettings = {
   enabled: false,
@@ -343,7 +345,9 @@ const DEMO_SHORTS: Record<string, string> = {
   "Easy treadmill walk": "https://www.youtube.com/shorts/0nEo08l5xok",
   "Slow walk": "https://www.youtube.com/shorts/0nEo08l5xok",
   "Stationary Bike": "https://www.youtube.com/shorts/z99qyGHnFLI",
+  Cycling: "https://www.youtube.com/shorts/z99qyGHnFLI",
   "Bike or treadmill": "https://www.youtube.com/shorts/z99qyGHnFLI",
+  "Cross trainer or treadmill": "https://www.youtube.com/shorts/0nEo08l5xok",
   "Wrist rotations": "https://www.youtube.com/shorts/hIFZobrkuC8",
   "Shoulder rolls": "https://www.youtube.com/shorts/A7kgx8gGmPA",
   "Arm circles": "https://www.youtube.com/shorts/scaEzppp2Kg",
@@ -370,11 +374,14 @@ const DEMO_SHORTS: Record<string, string> = {
   "Leg Extension Machine": "https://www.youtube.com/shorts/N32sIi1ktv4",
   "Standing Calf Raise": "https://www.youtube.com/shorts/8sT7Ne3Kzwc",
   "Ab Crunch Machine": "https://www.youtube.com/shorts/mnRhbUB3Fjs",
-  "Calf stretch": "https://www.youtube.com/shorts/sctiIx9iWFQ",
-  "Hip flexor stretch": "https://www.youtube.com/shorts/coLwbVbw6yM",
+  "Calf stretch": "https://www.youtube.com/shorts/7SO6QzfBRaE",
+  "Hip stretch": "https://www.youtube.com/shorts/o7CVX39LIaA",
+  "Hip flexor stretch": "https://www.youtube.com/shorts/Mh1FgwOVQB4",
+  "Quad stretch": "https://www.youtube.com/shorts/cVqb6UdfIpM",
   "Seated hamstring stretch": "https://www.youtube.com/shorts/sctiIx9iWFQ",
-  "Doorway chest stretch": "https://www.youtube.com/shorts/_lBeMy0MKLY",
-  "Deep breathing": "https://www.youtube.com/shorts/RXu1HOfsxII",
+  "Doorway chest stretch": "https://www.youtube.com/shorts/CiIshHzAkQQ",
+  "Full body stretch": "https://www.youtube.com/shorts/rcUFPu65AwU",
+  "Deep breathing": "https://www.youtube.com/shorts/h1h0T-vCpOM",
 };
 
 const FALLBACK_DEMO_SHORT = "https://www.youtube.com/shorts/Qgpxx1Bxmgs";
@@ -392,6 +399,18 @@ function writeStorage<T>(key: string, value: T) {
   const serializedValue = JSON.stringify(value);
   localStorage.setItem(key, serializedValue);
   writeCookieStorage(key, serializedValue);
+}
+
+function ensureManualProgressStorageVersion() {
+  if (readStorage<string>(STORAGE_KEYS.progressStorageVersion, "") === MANUAL_PROGRESS_STORAGE_VERSION) return;
+
+  writeStorage(STORAGE_KEYS.completion, {});
+  writeStorage(STORAGE_KEYS.exerciseSelection, {});
+  writeStorage(STORAGE_KEYS.monthlyProgress, {});
+  writeStorage(STORAGE_KEYS.waterIntake, {});
+  writeStorage(STORAGE_KEYS.proteinIntake, {});
+  writeStorage(STORAGE_KEYS.workoutLogs, {});
+  writeStorage(STORAGE_KEYS.progressStorageVersion, MANUAL_PROGRESS_STORAGE_VERSION);
 }
 
 function getCookieStorageName(key: string) {
@@ -493,12 +512,14 @@ function normalizeProfile(savedProfile: Partial<UserProfile>): UserProfile {
   const savedWorkoutDuration = String(savedProfile.workoutDuration ?? "");
   const savedDaysPerWeek = String(savedProfile.daysPerWeek ?? "");
   const savedInjuryOrPain = String(savedProfile.injuryOrPain ?? "");
+  const goal = savedProfile.goal ?? initialProfile.goal;
 
   return {
     ...initialProfile,
     ...savedProfile,
     name: savedProfile.name ?? "",
     age: savedProfile.age ?? "",
+    goal,
     gymType:
       savedGymType === "Basic"
         ? "Basic gym"
@@ -516,7 +537,7 @@ function normalizeProfile(savedProfile: Partial<UserProfile>): UserProfile {
     injuryOrPain: savedInjuryOrPain === "Back" ? "Back pain" : savedProfile.injuryOrPain ?? initialProfile.injuryOrPain,
     injuryDetail: savedProfile.injuryDetail ?? "",
     dietPreference: savedProfile.dietPreference ?? initialProfile.dietPreference,
-    bodyGoal: savedProfile.bodyGoal ?? initialProfile.bodyGoal,
+    bodyGoal: getBodyGoalFromMainGoal(goal),
   };
 }
 
@@ -689,11 +710,9 @@ function calculateTargetCalories(profile: UserProfile) {
   return Math.max(minimum, roundToNearest50(maintenance + adjustment));
 }
 
-function getRecommendedBodyGoal(profile: UserProfile): BodyGoal {
-  if (profile.bmiCategory === "Underweight range") return "Gain muscle slowly";
-  if (profile.bmiCategory === "Overweight range" || profile.bmiCategory === "Obese range") return "Lose weight slowly";
-  if (profile.goal === "Build muscle") return "Gain muscle slowly";
-  if (profile.goal === "Lose fat") return "Lose weight slowly";
+function getBodyGoalFromMainGoal(goal: UserProfile["goal"]): BodyGoal {
+  if (goal === "Lose fat") return "Lose weight slowly";
+  if (goal === "Build muscle") return "Gain muscle slowly";
   return "Maintain weight";
 }
 
@@ -1415,10 +1434,10 @@ function normalizeSectionLog(section?: Partial<WorkoutSectionLog>): WorkoutSecti
   };
 }
 
-function createDefaultWorkoutLog(day: DayPlan | null, fallbackWeight = ""): DailyWorkoutLog {
+function createDefaultWorkoutLog(day: DayPlan | null, _fallbackWeight = ""): DailyWorkoutLog {
   return {
     day: day?.day ?? "",
-    beforeWeight: fallbackWeight,
+    beforeWeight: "",
     afterWeight: "",
     sections: {
       warmUp: createEmptySectionLog(),
@@ -1512,16 +1531,10 @@ function parseSetCount(sets: string) {
   return match ? Math.min(6, Math.max(1, Number(match[0]))) : 3;
 }
 
-function parseSuggestedReps(reps: string) {
-  const match = reps.match(/\d+/);
-  return match ? String(match[0]) : "";
-}
-
 function normalizeSetLogs(logs: SetPerformanceLog[] | undefined, option: ExerciseOption, includeWeight: boolean) {
   const targetCount = parseSetCount(option.sets);
-  const baseReps = parseSuggestedReps(option.repsPerSet);
   const rows = [...(logs ?? [])];
-  while (rows.length < targetCount) rows.push({ weight: includeWeight ? "" : "Bodyweight", reps: baseReps, duration: "" });
+  while (rows.length < targetCount) rows.push({ weight: "", reps: "", duration: "" });
   return rows.slice(0, Math.max(targetCount, rows.length));
 }
 
@@ -1755,7 +1768,10 @@ function App() {
     return normalizeProfile(savedProfile);
   });
   const [weeklyPlan, setWeeklyPlan] = useState<WeeklyPlan | null>(() => readStorage<WeeklyPlan | null>(STORAGE_KEYS.plan, null));
-  const [completion, setCompletion] = useState<ExerciseCompletion>(() => readStorage(STORAGE_KEYS.completion, {}));
+  const [completion, setCompletion] = useState<ExerciseCompletion>(() => {
+    ensureManualProgressStorageVersion();
+    return readStorage(STORAGE_KEYS.completion, {});
+  });
   const [exerciseSelection, setExerciseSelection] = useState<ExerciseSelection>(() => readStorage(STORAGE_KEYS.exerciseSelection, {}));
   const [checkIn, setCheckIn] = useState<WorkoutCheckIn>(() => normalizeCheckIn(readStorage<Partial<WorkoutCheckIn>>(STORAGE_KEYS.checkIn, initialCheckIn)));
   const [adaptedPlan, setAdaptedPlan] = useState(() => readStorage(STORAGE_KEYS.adaptation, ""));
@@ -1793,6 +1809,7 @@ function App() {
 
   const todaysPlan = weeklyPlan?.days[selectedDayIndex] ?? weeklyPlan?.days[0] ?? null;
   const todaysWorkoutLog = getWorkoutLog(workoutLogs, todaysPlan, profile.weight);
+  const hasLoggedBeforeWorkoutWeight = Boolean(todaysPlan && workoutLogs[todaysPlan.day]?.beforeWeight);
   const todaysActivitySummary = getWorkoutActivitySummary(todaysPlan, todaysWorkoutLog, completion);
   const resumeDayIndex = useMemo(() => getResumeDayIndex(weeklyPlan, completion, selectedDayIndex), [completion, selectedDayIndex, weeklyPlan]);
   const resumeDay = weeklyPlan?.days[resumeDayIndex] ?? weeklyPlan?.days[0] ?? null;
@@ -2099,7 +2116,10 @@ function App() {
   }, [profile.age, profile.bmi, profile.bmiCategory, profile.bodyGoal, profile.daysPerWeek, profile.dietPreference, profile.gender, profile.goal, profile.height, profile.weight, screen, weightLog]);
 
   function updateProfile<K extends keyof UserProfile>(key: K, value: UserProfile[K]) {
-    setProfile((current) => ({ ...current, [key]: value }));
+    setProfile((current) => {
+      const next = { ...current, [key]: value };
+      return key === "goal" ? { ...next, bodyGoal: getBodyGoalFromMainGoal(value as UserProfile["goal"]) } : next;
+    });
   }
 
   function logWaterIntake(ml: number) {
@@ -2191,6 +2211,7 @@ function App() {
       ...cleanProfile,
       bmi: nextBmi,
       bmiCategory: getBmiCategory(nextBmi),
+      bodyGoal: getBodyGoalFromMainGoal(cleanProfile.goal),
     };
 
     setProfile(updatedProfile);
@@ -2266,11 +2287,11 @@ function App() {
     void refreshNutritionPlan(nextProfile, true, nextWeightLog);
   }
 
-  function updateWorkoutWeight(day: DayPlan, key: "beforeWeight" | "afterWeight", value: string) {
+  function updateWorkoutWeight(day: DayPlan, key: "beforeWeight" | "afterWeight", value: string, applyToBodyWeight = key === "afterWeight") {
     const currentLog = getWorkoutLog(workoutLogs, day, profile.weight);
     updateWorkoutLog(day, (current) => ({ ...current, [key]: value }));
 
-    if (key === "afterWeight" || !currentLog.afterWeight) applyLoggedBodyWeight(value);
+    if (applyToBodyWeight || (key === "afterWeight" && !currentLog.afterWeight)) applyLoggedBodyWeight(value);
   }
 
   function toggleWorkoutItemTimer(day: DayPlan, itemId: string) {
@@ -2502,6 +2523,26 @@ function App() {
     resetMixpanelUser();
   }
 
+  function resetLoggedProgress(nextMonthlyProgress: MonthlyProgress = {}) {
+    const emptyCompletion: ExerciseCompletion = {};
+    const emptySelection: ExerciseSelection = {};
+    const emptyWorkoutLogs: WorkoutLogs = {};
+    const emptyNutritionLog: Record<string, number> = {};
+
+    setCompletion(emptyCompletion);
+    setExerciseSelection(emptySelection);
+    setWorkoutLogs(emptyWorkoutLogs);
+    setWaterLog(emptyNutritionLog);
+    setProteinLog(emptyNutritionLog);
+    setMonthlyProgress(nextMonthlyProgress);
+    writeStorage(STORAGE_KEYS.completion, emptyCompletion);
+    writeStorage(STORAGE_KEYS.exerciseSelection, emptySelection);
+    writeStorage(STORAGE_KEYS.workoutLogs, emptyWorkoutLogs);
+    writeStorage(STORAGE_KEYS.waterIntake, emptyNutritionLog);
+    writeStorage(STORAGE_KEYS.proteinIntake, emptyNutritionLog);
+    writeStorage(STORAGE_KEYS.monthlyProgress, nextMonthlyProgress);
+  }
+
   function goToScreen(nextScreen: Screen) {
     setScreenHistory((history) => [...history, screen]);
     setScreen(nextScreen);
@@ -2525,6 +2566,7 @@ function App() {
       bmi: calculateBmi(profile.height, profile.weight),
       bmiCategory: getBmiCategory(calculateBmi(profile.height, profile.weight)),
       injuryDetail: profile.injuryOrPain === "Other" ? profile.injuryDetail : "",
+      bodyGoal: getBodyGoalFromMainGoal(profile.goal),
     };
     const prompt = buildWeekOnePrompt(finalProfile);
     const fallbackPlan = createFallbackPlan(finalProfile);
@@ -2537,13 +2579,17 @@ function App() {
 
     if (cachedPlan && cachedSignature === profileSignature) {
       const cachedStartDate = readStorage(STORAGE_KEYS.planStartDate, getLocalDateKey());
+      const freshMonthlyProgress = upsertMonthlyProgress({}, cachedPlan, {});
       setProfile(finalProfile);
       setWeeklyPlan(cachedPlan);
       setPlanStartDate(cachedStartDate);
-      const nextDayIndex = getResumeDayIndex(cachedPlan, completion, selectedDayIndex);
+      resetLoggedProgress(freshMonthlyProgress);
+      setPlanArchive({});
+      const nextDayIndex = getResumeDayIndex(cachedPlan, {}, 0);
       setSelectedDayIndex(nextDayIndex);
       writeStorage(STORAGE_KEYS.profile, finalProfile);
       writeStorage(STORAGE_KEYS.planStartDate, cachedStartDate);
+      writeStorage(STORAGE_KEYS.planArchive, {});
       writeStorage(STORAGE_KEYS.aiPrompt, prompt);
       trackEvent("workout_plan_generated", {
         ...profileAnalytics,
@@ -2556,15 +2602,12 @@ function App() {
     }
 
     setProfile(finalProfile);
-    setCompletion({});
-    setExerciseSelection({});
+    resetLoggedProgress({});
     setPlanArchive({});
     setSelectedDayIndex(0);
     const newPlanStartDate = getLocalDateKey();
     setPlanStartDate(newPlanStartDate);
     writeStorage(STORAGE_KEYS.profile, finalProfile);
-    writeStorage(STORAGE_KEYS.completion, {});
-    writeStorage(STORAGE_KEYS.exerciseSelection, {});
     writeStorage(STORAGE_KEYS.planArchive, {});
     writeStorage(STORAGE_KEYS.planStartDate, newPlanStartDate);
     writeStorage(STORAGE_KEYS.aiPrompt, prompt);
@@ -2699,12 +2742,14 @@ function App() {
     setWeeklyPlan(nextPlan);
     setCompletion({});
     setExerciseSelection({});
+    setWorkoutLogs({});
     setAdaptedPlan(nextMessage);
     setSelectedDayIndex(0);
     setMonthlyProgress(nextMonthlyProgress);
     writeStorage(STORAGE_KEYS.plan, nextPlan);
     writeStorage(STORAGE_KEYS.completion, {});
     writeStorage(STORAGE_KEYS.exerciseSelection, {});
+    writeStorage(STORAGE_KEYS.workoutLogs, {});
     writeStorage(STORAGE_KEYS.adaptation, nextMessage);
     writeStorage(STORAGE_KEYS.selectedDayIndex, 0);
     writeStorage(STORAGE_KEYS.monthlyProgress, nextMonthlyProgress);
@@ -2841,6 +2886,7 @@ function App() {
             completion={completion}
             exerciseSelection={exerciseSelection}
             log={todaysWorkoutLog}
+            hasLoggedBeforeWeight={hasLoggedBeforeWorkoutWeight}
             currentWeek={weeklyPlan?.week ?? 1}
             planStartDate={planStartDate}
             activitySummary={todaysActivitySummary}
@@ -3035,14 +3081,6 @@ function OnboardingScreen({
               options={["Lose fat", "Build strength", "Build muscle", "General fitness"]}
               value={profile.goal}
               onChange={(value) => updateProfile("goal", value as UserProfile["goal"])}
-            />
-
-            <ChipGroup
-              columns="grid-cols-3"
-              label="Body goal"
-              options={["Lose weight slowly", "Maintain weight", "Gain muscle slowly"]}
-              value={profile.bodyGoal}
-              onChange={(value) => updateProfile("bodyGoal", value as UserProfile["bodyGoal"])}
             />
 
             <ChipGroup
@@ -4024,6 +4062,7 @@ function TodayWorkoutScreen({
   completion,
   exerciseSelection,
   log,
+  hasLoggedBeforeWeight,
   currentWeek,
   planStartDate,
   activitySummary,
@@ -4040,13 +4079,14 @@ function TodayWorkoutScreen({
   completion: ExerciseCompletion;
   exerciseSelection: ExerciseSelection;
   log: DailyWorkoutLog;
+  hasLoggedBeforeWeight: boolean;
   currentWeek: number;
   planStartDate: string;
   activitySummary: ReturnType<typeof getWorkoutActivitySummary>;
   onChooseExerciseOption: (id: string, selectedOption: "main" | "alternative") => void;
   onToggleItemTimer: (day: DayPlan, itemId: string) => void;
   onUpdateExerciseSetLog: (day: DayPlan, exerciseId: string, setIndex: number, key: keyof SetPerformanceLog, value: string) => void;
-  onUpdateWorkoutWeight: (day: DayPlan, key: "beforeWeight" | "afterWeight", value: string) => void;
+  onUpdateWorkoutWeight: (day: DayPlan, key: "beforeWeight" | "afterWeight", value: string, applyToBodyWeight?: boolean) => void;
   onUpdateExerciseStatus: (id: string, status: ExerciseStatus) => void;
   onOpenVideo: (video: VideoTarget) => void;
   onBackToWeek: () => void;
@@ -4064,8 +4104,13 @@ function TodayWorkoutScreen({
   const currentItem = currentIndex >= 0 ? queue[currentIndex] : null;
   const upcomingItem = currentIndex >= 0 ? queue[currentIndex + 1] : null;
   const dayProgress = getDayProgress(day, completion);
-  const currentPosition = currentItem ? currentIndex + 1 : queue.length;
+  const attemptedItems = dayProgress.done + dayProgress.partial + dayProgress.skipped;
   const workoutDateLabel = getWorkoutDateLabel(getDayIndexFromLabel(day.day), currentWeek, planStartDate);
+  const [isWorkoutStarted, setIsWorkoutStarted] = useState(hasLoggedBeforeWeight);
+
+  useEffect(() => {
+    setIsWorkoutStarted(hasLoggedBeforeWeight);
+  }, [day.day, hasLoggedBeforeWeight]);
 
   if (day.isRestDay) {
     return (
@@ -4081,7 +4126,7 @@ function TodayWorkoutScreen({
             <ActivityCard
               activity={activity}
               key={activity.id}
-              status={getCompletionStatus(completion, day, activity.id) ?? "Not done"}
+              status={getCompletionStatus(completion, day, activity.id)}
               timer={getItemTimer(log, activity.id)}
               onOpenVideo={onOpenVideo}
               onToggleTimer={() => onToggleItemTimer(day, activity.id)}
@@ -4098,12 +4143,22 @@ function TodayWorkoutScreen({
       <WorkoutBackButton onClick={onBackToWeek} />
       <ScreenTitle icon={<Dumbbell size={22} />} title="Today's Workout" subtitle={`${day.day} • ${workoutDateLabel} • ${day.title}`} />
 
+      {!isWorkoutStarted ? (
+        <PreWorkoutWeightCard
+          initialWeight={log.beforeWeight}
+          onStart={(weight) => {
+            onUpdateWorkoutWeight(day, "beforeWeight", weight, true);
+            setIsWorkoutStarted(true);
+          }}
+        />
+      ) : (
+        <>
       <section className="rounded-3xl border border-[#334155] bg-[#1E293B] p-4">
         <div className="flex items-center justify-between gap-3">
           <div>
             <p className="text-xs font-black uppercase tracking-wide text-[#F97316]">Session progress</p>
             <h2 className="mt-1 text-xl font-black text-white">
-              {currentItem ? `${currentPosition}/${queue.length}` : `${queue.length}/${queue.length}`}
+              {attemptedItems}/{queue.length}
             </h2>
           </div>
           <div className="rounded-2xl bg-[#0F172A] px-3 py-2 text-right">
@@ -4127,7 +4182,7 @@ function TodayWorkoutScreen({
             <ActivityCard
               activity={currentItem.activity}
               key={currentItem.id}
-              status={getCompletionStatus(completion, day, currentItem.id) ?? "Not done"}
+              status={getCompletionStatus(completion, day, currentItem.id)}
               timer={getItemTimer(log, currentItem.id)}
               onOpenVideo={onOpenVideo}
               onToggleTimer={() => onToggleItemTimer(day, currentItem.id)}
@@ -4135,7 +4190,7 @@ function TodayWorkoutScreen({
             />
           ) : (
             <ExerciseCard
-              completionStatus={getCompletionStatus(completion, day, currentItem.id) ?? "Not done"}
+              completionStatus={getCompletionStatus(completion, day, currentItem.id)}
               exercise={currentItem.exercise}
               key={currentItem.id}
               selectedOption={exerciseSelection[currentItem.id] ?? "main"}
@@ -4163,6 +4218,46 @@ function TodayWorkoutScreen({
         Finish Workout
         <ChevronRight size={20} />
       </button>
+        </>
+      )}
+    </section>
+  );
+}
+
+function PreWorkoutWeightCard({
+  initialWeight,
+  onStart,
+}: {
+  initialWeight: string;
+  onStart: (weight: string) => void;
+}) {
+  const [draftWeight, setDraftWeight] = useState(initialWeight);
+  const canStart = isNumberInRange(draftWeight, VALUE_RULES.weight.min, VALUE_RULES.weight.max, 2);
+
+  useEffect(() => {
+    setDraftWeight(initialWeight);
+  }, [initialWeight]);
+
+  return (
+    <section className="mt-2 grid gap-4 rounded-3xl border border-[#334155] bg-[#1E293B] p-4 sm:p-5">
+      <div>
+        <p className="text-xs font-black uppercase tracking-wide text-[#F97316]">Before workout</p>
+        <h2 className="mt-2 text-2xl font-black leading-tight text-white">Log your starting weight</h2>
+        <p className="mt-2 text-sm font-semibold leading-6 text-[#CBD5E1]">
+          This records today&apos;s body weight before training and keeps your progress and nutrition targets up to date.
+        </p>
+      </div>
+      <WeightInput label="Starting" value={draftWeight} onChange={setDraftWeight} />
+      <button
+        className="flex min-h-[3.25rem] w-full items-center justify-center gap-2 rounded-2xl bg-[#40B5AD] px-5 font-black text-slate-950 shadow-xl shadow-teal-200 disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-14"
+        disabled={!canStart}
+        onClick={() => onStart(draftWeight)}
+        type="button"
+      >
+        Start Workout
+        <ChevronRight size={20} />
+      </button>
+      {!canStart && <p className="text-xs font-bold text-[#FCA5A5]">Enter a valid weight from 30 to 150 kg to start.</p>}
     </section>
   );
 }
@@ -4259,7 +4354,7 @@ function ActivityCard({
   onUpdateStatus,
 }: {
   activity: PlanActivity;
-  status: ExerciseStatus;
+  status: ExerciseStatus | undefined;
   timer: WorkoutSectionLog;
   onOpenVideo: (video: VideoTarget) => void;
   onToggleTimer: () => void;
@@ -4324,7 +4419,7 @@ function ExerciseCard({
 }: {
   exercise: Exercise;
   selectedOption: "main" | "alternative";
-  completionStatus: ExerciseStatus;
+  completionStatus: ExerciseStatus | undefined;
   setLogs: SetPerformanceLog[] | undefined;
   timer: WorkoutSectionLog;
   onChooseOption: (selectedOption: "main" | "alternative") => void;
@@ -4468,7 +4563,7 @@ function StatusButtonGroup({
 }: {
   allowedStatuses: ExerciseStatus[];
   className?: string;
-  value: ExerciseStatus;
+  value: ExerciseStatus | undefined;
   onChange: (status: ExerciseStatus) => void;
 }) {
   return (
@@ -5073,6 +5168,63 @@ function CalendarLegendDot({ className, label }: { className: string; label: str
   );
 }
 
+function ManualIntakeInput({
+  accentClassName,
+  addButtonClassName,
+  ariaLabel,
+  max,
+  placeholder,
+  unit,
+  onAdd,
+}: {
+  accentClassName: string;
+  addButtonClassName: string;
+  ariaLabel: string;
+  max: number;
+  placeholder: string;
+  unit: string;
+  onAdd: (amount: number) => void;
+}) {
+  const [value, setValue] = useState("");
+  const amount = Number(value);
+  const canAdd = Number.isFinite(amount) && amount > 0 && amount <= max;
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!canAdd) return;
+    onAdd(amount);
+    setValue("");
+  }
+
+  return (
+    <form className="mt-4 grid grid-cols-[1fr_auto] gap-2" onSubmit={handleSubmit}>
+      <label className={`flex min-h-12 items-center rounded-2xl border bg-[#0F172A] px-4 ${accentClassName}`}>
+        <input
+          aria-label={ariaLabel}
+          className="min-w-0 flex-1 bg-transparent text-base font-black text-white outline-none placeholder:text-[#64748B]"
+          inputMode="decimal"
+          max={max}
+          min={1}
+          placeholder={placeholder}
+          step="1"
+          type="number"
+          value={value}
+          onChange={(event) => setValue(event.target.value)}
+        />
+        <span className="shrink-0 text-sm font-black text-[#CBD5E1]">{unit}</span>
+      </label>
+      <button
+        className={`flex min-h-12 items-center justify-center gap-1 rounded-2xl px-4 text-sm font-black transition active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45 ${addButtonClassName}`}
+        disabled={!canAdd}
+        type="submit"
+      >
+        <Plus size={17} />
+        Add
+      </button>
+    </form>
+  );
+}
+
 function NutritionScreen({
   profile,
   nutritionPlan,
@@ -5146,19 +5298,15 @@ function NutritionScreen({
             <ProgressBar percent={waterIntakePercent} tone="cyan" />
           </div>
         </div>
-        <div className="mt-4 grid grid-cols-3 gap-2">
-          {[250, 500, 750].map((ml) => (
-            <button
-              className="flex min-h-11 items-center justify-center gap-1 rounded-2xl bg-[#B3C5FF] px-2 text-xs font-black text-[#002B75] transition active:scale-[0.98]"
-              key={ml}
-              onClick={() => onLogWater(ml)}
-              type="button"
-            >
-              <Plus size={15} />
-              {ml} ml
-            </button>
-          ))}
-        </div>
+        <ManualIntakeInput
+          accentClassName="border-[#3B82F6]/40 focus-within:border-[#B3C5FF] focus-within:ring-4 focus-within:ring-[#3B82F6]/15"
+          addButtonClassName="bg-[#B3C5FF] text-[#002B75]"
+          ariaLabel="Water quantity in ml"
+          max={5000}
+          placeholder="Enter quantity"
+          unit="ml"
+          onAdd={(ml) => onLogWater(Math.round(ml))}
+        />
       </section>
 
       <section className="rounded-3xl border border-[#334155] bg-[#1E293B] p-4">
@@ -5172,19 +5320,15 @@ function NutritionScreen({
             <ProgressBar percent={proteinIntakePercent} tone="orange" />
           </div>
         </div>
-        <div className="mt-4 grid grid-cols-3 gap-2">
-          {[10, 20, 30].map((grams) => (
-            <button
-              className="flex min-h-11 items-center justify-center gap-1 rounded-2xl bg-[#F97316] px-2 text-xs font-black text-[#283500] transition active:scale-[0.98]"
-              key={grams}
-              onClick={() => onLogProtein(grams)}
-              type="button"
-            >
-              <Plus size={15} />
-              {grams} g
-            </button>
-          ))}
-        </div>
+        <ManualIntakeInput
+          accentClassName="border-[#F97316]/40 focus-within:border-[#FB923C] focus-within:ring-4 focus-within:ring-[#F97316]/15"
+          addButtonClassName="bg-[#F97316] text-[#283500]"
+          ariaLabel="Protein quantity in grams"
+          max={300}
+          placeholder="Enter quantity"
+          unit="g"
+          onAdd={(grams) => onLogProtein(Math.round(grams))}
+        />
       </section>
 
       <section className="grid gap-3">
@@ -5542,7 +5686,10 @@ function ProfileScreen({
   }, [profile]);
 
   function updateDraftProfile<K extends keyof UserProfile>(key: K, value: UserProfile[K]) {
-    setDraftProfile((current) => ({ ...current, [key]: value }));
+    setDraftProfile((current) => {
+      const next = { ...current, [key]: value };
+      return key === "goal" ? { ...next, bodyGoal: getBodyGoalFromMainGoal(value as UserProfile["goal"]) } : next;
+    });
   }
 
   function saveProfileUpdate() {
@@ -5615,7 +5762,6 @@ function ProfileScreen({
           </div>
           <SelectField label="Gender" value={draftProfile.gender} onChange={(value) => updateDraftProfile("gender", value as UserProfile["gender"])} options={["Male", "Female", "Other"]} />
           <SelectField label="Goal" value={draftProfile.goal} onChange={(value) => updateDraftProfile("goal", value as UserProfile["goal"])} options={["Lose fat", "Build strength", "Build muscle", "General fitness"]} />
-          <SelectField label="Body goal" value={draftProfile.bodyGoal} onChange={(value) => updateDraftProfile("bodyGoal", value as BodyGoal)} options={["Lose weight slowly", "Maintain weight", "Gain muscle slowly"]} />
           <SelectField label="Diet" value={draftProfile.dietPreference} onChange={(value) => updateDraftProfile("dietPreference", value as UserProfile["dietPreference"])} options={["Vegetarian", "Non-vegetarian", "Eggetarian", "Vegan"]} />
           <SelectField label="Gym type" value={draftProfile.gymType} onChange={(value) => updateDraftProfile("gymType", value as UserProfile["gymType"])} options={["Basic gym", "Highly equipped gym"]} />
           <SelectField label="Days per week" value={draftProfile.daysPerWeek} onChange={(value) => updateDraftProfile("daysPerWeek", value as UserProfile["daysPerWeek"])} options={["3 days", "4 days", "5 days"]} />
@@ -5639,7 +5785,6 @@ function ProfileScreen({
         <MetricTile label="Time" value={profile.workoutDuration} />
         <MetricTile label="Confidence" value={profile.confidenceLevel} />
         <MetricTile label="Diet" value={profile.dietPreference} />
-        <MetricTile label="Body goal" value={profile.bodyGoal.replace(" slowly", "")} />
       </div>
 
       <div className="rounded-3xl border border-slate-200 bg-white p-4">
@@ -5792,7 +5937,7 @@ function CheckInScreen({
   log: DailyWorkoutLog;
   checkIn: WorkoutCheckIn;
   setCheckIn: (checkIn: WorkoutCheckIn) => void;
-  onUpdateWorkoutWeight: (day: DayPlan, key: "beforeWeight" | "afterWeight", value: string) => void;
+  onUpdateWorkoutWeight: (day: DayPlan, key: "beforeWeight" | "afterWeight", value: string, applyToBodyWeight?: boolean) => void;
   onSave: () => void;
 }) {
   return (

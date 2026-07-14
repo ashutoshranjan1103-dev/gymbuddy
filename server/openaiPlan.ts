@@ -98,6 +98,8 @@ const weeklyPlanSchema = {
 const allowedExerciseLibrary = [
   "Treadmill walk | https://www.youtube.com/shorts/0nEo08l5xok",
   "Stationary Bike | https://www.youtube.com/shorts/z99qyGHnFLI",
+  "Cycling | https://www.youtube.com/shorts/z99qyGHnFLI",
+  "Cross trainer or treadmill | https://www.youtube.com/shorts/0nEo08l5xok",
   "Wrist rotations | https://www.youtube.com/shorts/hIFZobrkuC8",
   "Shoulder rolls | https://www.youtube.com/shorts/A7kgx8gGmPA",
   "Arm circles | https://www.youtube.com/shorts/scaEzppp2Kg",
@@ -124,10 +126,14 @@ const allowedExerciseLibrary = [
   "Leg Extension Machine | https://www.youtube.com/shorts/N32sIi1ktv4",
   "Standing Calf Raise | https://www.youtube.com/shorts/8sT7Ne3Kzwc",
   "Ab Crunch Machine | https://www.youtube.com/shorts/mnRhbUB3Fjs",
+  "Calf stretch | https://www.youtube.com/shorts/7SO6QzfBRaE",
+  "Hip stretch | https://www.youtube.com/shorts/o7CVX39LIaA",
+  "Hip flexor stretch | https://www.youtube.com/shorts/Mh1FgwOVQB4",
+  "Quad stretch | https://www.youtube.com/shorts/cVqb6UdfIpM",
   "Seated hamstring stretch | https://www.youtube.com/shorts/sctiIx9iWFQ",
-  "Hip flexor stretch | https://www.youtube.com/shorts/coLwbVbw6yM",
-  "Doorway chest stretch | https://www.youtube.com/shorts/_lBeMy0MKLY",
-  "Deep breathing | https://www.youtube.com/shorts/RXu1HOfsxII",
+  "Doorway chest stretch | https://www.youtube.com/shorts/CiIshHzAkQQ",
+  "Full body stretch | https://www.youtube.com/shorts/rcUFPu65AwU",
+  "Deep breathing | https://www.youtube.com/shorts/h1h0T-vCpOM",
 ].join("\n");
 
 const allowedDumbbellKgValues = new Set([1, 2, 3, 4, 5, 7.5, 10, 12.5, 15, 17.5, 20, 22.5, 25, 30]);
